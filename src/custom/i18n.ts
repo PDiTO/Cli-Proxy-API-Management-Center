@@ -52,7 +52,7 @@ const en = {
   col_account: 'Account',
   col_limits: 'Usage limits',
   col_resets: 'Resets',
-  use_reset: 'Use reset',
+  use_reset: 'Use Reset',
   no_resets: 'No resets available',
   resets_unreadable: 'Resets could not be read',
   no_expiry: 'No expiry',
