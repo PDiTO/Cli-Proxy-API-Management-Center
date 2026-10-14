@@ -21,7 +21,12 @@ import { QUOTA_ADAPTERS } from '@/features/quota/providers';
 import { useClaudeResetGrants } from '@/features/quota/providers/claude/ClaudeResetGrants';
 import type { QuotaProviderType } from '@/features/quota/providers/types';
 import {
+  containsEmail,
+  credentialLabel,
   formatCountdown,
+  maskEmails,
+  resetUrgency,
+  type ResetUrgency,
   type OverviewCredential,
   type OverviewProviderSummary,
   type OverviewSummaryLine,
@@ -161,16 +166,113 @@ export function ProviderSummaryCard({
   );
 }
 
-const displayName = (credential: OverviewCredential): string => {
-  const file = credential.entry.file;
-  return file.note?.trim() || file.email?.trim() || file.name;
+/** Text that may contain an email: blurred when emails are hidden. */
+function Private({ text, hide, className }: { text: string; hide: boolean; className?: string }) {
+  const redact = hide && containsEmail(text);
+  return (
+    <span
+      className={`${className ?? ''} ${redact ? styles.redacted : ''}`}
+      title={redact ? undefined : text}
+      aria-label={redact ? maskEmails(text) : undefined}
+    >
+      {text}
+    </span>
+  );
+}
+
+const urgencyClass: Record<ResetUrgency, string> = {
+  day: styles.urgencyDay,
+  week: styles.urgencyWeek,
+  later: '',
+  none: '',
 };
+
+interface ResetCreditView {
+  id: string;
+  count: number;
+  label: string | null;
+  expiresAtMs: number | null;
+}
+
+function ResetsCell({
+  credits,
+  nowMs,
+  canUse,
+  onUse,
+  readError,
+}: {
+  credits: ResetCreditView[] | null;
+  nowMs: number;
+  canUse: boolean;
+  onUse: () => void;
+  readError?: boolean;
+}) {
+  const { t } = useTranslation();
+  if (credits === null) {
+    return (
+      <div className={styles.rowResets}>
+        {readError && <span className={styles.muted}>{t('pd_overview.resets_unreadable')}</span>}
+      </div>
+    );
+  }
+  const sorted = [...credits].sort(
+    (a, b) => (a.expiresAtMs ?? Infinity) - (b.expiresAtMs ?? Infinity)
+  );
+  return (
+    <div className={styles.rowResets}>
+      {sorted.length === 0 ? (
+        <span className={styles.muted}>{t('pd_overview.no_resets')}</span>
+      ) : (
+        <ul className={styles.resetList}>
+          {sorted.map((credit) => (
+            <li
+              key={credit.id}
+              className={urgencyClass[resetUrgency(credit.expiresAtMs, nowMs)]}
+              title={credit.label ?? undefined}
+            >
+              {credit.count > 1 && (
+                <strong>{t('pd_overview.reset_count', { count: credit.count })} </strong>
+              )}
+              {credit.expiresAtMs === null ? (
+                t('pd_overview.no_expiry')
+              ) : (
+                <>
+                  <span className={styles.resetDate}>{formatInstantShort(credit.expiresAtMs)}</span>
+                  {' · '}
+                  {formatRelativeInstant(credit.expiresAtMs, nowMs)}
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {sorted.length > 0 && (
+        <button type="button" className={styles.ghostButton} disabled={!canUse} onClick={onUse}>
+          {t('pd_overview.use_reset')}
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function LedgerHeader() {
+  const { t } = useTranslation();
+  return (
+    <div className={`${styles.row} ${styles.rowHeader}`} aria-hidden="true">
+      <span>{t('pd_overview.col_account')}</span>
+      <span>{t('pd_overview.col_limits')}</span>
+      <span>{t('pd_overview.col_resets')}</span>
+      <span />
+    </div>
+  );
+}
 
 export interface LedgerRowProps {
   credential: OverviewCredential;
   resolvedTheme: ResolvedTheme;
   nowMs: number;
   firstInLine: boolean;
+  hideEmails: boolean;
   canRefresh: boolean;
   resetting: boolean;
   onRefresh: () => void;
@@ -182,6 +284,7 @@ export function LedgerRow({
   resolvedTheme,
   nowMs,
   firstInLine,
+  hideEmails,
   canRefresh,
   resetting,
   onRefresh,
@@ -200,34 +303,59 @@ export function LedgerRow({
     onRefresh
   );
   const adapter = QUOTA_ADAPTERS[entry.type];
-  const codexCredits =
-    entry.type === 'codex'
-      ? (quota as { rateLimitResetCreditsAvailableCount?: number | null } | undefined)
-          ?.rateLimitResetCreditsAvailableCount ?? null
-      : null;
-  const canCodexReset = Boolean(
-    adapter.resetQuota && quota && adapter.canResetQuota?.(quota) && canRefresh && !loading
-  );
-  const soonestGrantExpiry = claudeReset.grants
-    .filter((grant) => grant.resetsLeft > 0 && grant.endsAt)
-    .map((grant) => Date.parse(grant.endsAt ?? ''))
-    .filter((ms) => Number.isFinite(ms) && ms > nowMs)
-    .sort((a, b) => a - b)[0];
-  const name = displayName(credential);
+
+  let credits: ResetCreditView[] | null = null;
+  let canUseReset = false;
+  let useReset = () => {};
+  if (entry.type === 'claude' && claudeReset.count !== null) {
+    credits = claudeReset.grants
+      .filter((grant) => grant.resetsLeft > 0)
+      .map((grant) => {
+        const ends = grant.endsAt ? Date.parse(grant.endsAt) : NaN;
+        return {
+          id: grant.id,
+          count: grant.resetsLeft,
+          label: grant.label || null,
+          expiresAtMs: Number.isFinite(ends) ? ends : null,
+        };
+      });
+    canUseReset = !claudeReset.blocked;
+    useReset = claudeReset.confirm;
+  } else if (entry.type === 'codex' && quota?.status === 'success') {
+    const raw =
+      (quota as { rateLimitResetCredits?: { id?: string; status?: string; expiresAt?: string }[] })
+        .rateLimitResetCredits ?? [];
+    credits = raw
+      .filter((credit) => credit.status === 'available')
+      .map((credit, index) => {
+        const ends = Date.parse(credit.expiresAt ?? '');
+        return {
+          id: credit.id || `credit-${index}`,
+          count: 1,
+          label: null,
+          expiresAtMs: Number.isFinite(ends) ? ends : null,
+        };
+      });
+    canUseReset = Boolean(
+      adapter.resetQuota && adapter.canResetQuota?.(quota) && canRefresh && !resetting
+    );
+    useReset = onReset;
+  }
+
+  const name = credentialLabel(file);
   const planLabel = credential.plan
     ? [`${adapter.i18nPrefix}.${credential.plan}`, `${adapter.i18nPrefix}.plan_${credential.plan}`]
         .filter((key) => i18n.exists(key))
         .map((key) => t(key))[0] ?? credential.plan
     : null;
+  const refreshLabel = status === 'idle' ? t('pd_overview.load') : t('pd_overview.refresh');
 
   return (
     <div className={styles.row} data-first={firstInLine || undefined}>
       <div className={styles.rowIdentity}>
         <div className={styles.rowName}>
           <ProviderIcon provider={entry.type} resolvedTheme={resolvedTheme} />
-          <span className={styles.mono} title={file.name}>
-            {name}
-          </span>
+          <Private text={name} hide={hideEmails} className={styles.mono} />
         </div>
         <div className={styles.rowMeta}>
           <span
@@ -257,7 +385,9 @@ export function LedgerRow({
             </span>
           )}
         </div>
-        {name !== file.name && <div className={styles.rowFile}>{file.name}</div>}
+        {name !== file.name && (
+          <Private text={file.name} hide={hideEmails} className={styles.rowFile} />
+        )}
       </div>
 
       <div className={styles.rowWindows}>
@@ -285,56 +415,24 @@ export function LedgerRow({
         )}
       </div>
 
-      <div className={styles.rowActions}>
-        {entry.type === 'claude' && claudeReset.count !== null && (
-          <div className={styles.resetInfo}>
-            <span>{t('pd_overview.resets_remaining', { count: claudeReset.count })}</span>
-            {soonestGrantExpiry !== undefined && (
-              <span className={styles.muted}>
-                {t('pd_overview.reset_expires', { date: formatInstantShort(soonestGrantExpiry) })}
-              </span>
-            )}
-          </div>
-        )}
-        {codexCredits !== null && (
-          <div className={styles.resetInfo}>
-            <span>{t('pd_overview.resets_remaining', { count: codexCredits })}</span>
-          </div>
-        )}
-        <div className={styles.rowButtons}>
-          {entry.type === 'claude' && claudeReset.count !== null && (
-            <button
-              type="button"
-              className={styles.ghostButton}
-              disabled={claudeReset.blocked}
-              onClick={claudeReset.confirm}
-            >
-              <IconRefreshCw size={13} aria-hidden="true" />
-              {t('pd_overview.reset_limits')}
-            </button>
-          )}
-          {codexCredits !== null && (
-            <button
-              type="button"
-              className={styles.ghostButton}
-              disabled={!canCodexReset || resetting}
-              onClick={onReset}
-            >
-              <IconRefreshCw size={13} aria-hidden="true" />
-              {t('pd_overview.reset_limits')}
-            </button>
-          )}
-          <button
-            type="button"
-            className={styles.ghostButton}
-            disabled={!canRefresh || loading}
-            onClick={onRefresh}
-          >
-            <IconRefreshCw size={13} aria-hidden="true" />
-            {status === 'idle' ? t('pd_overview.load') : t('pd_overview.refresh')}
-          </button>
-        </div>
-      </div>
+      <ResetsCell
+        credits={credits}
+        nowMs={nowMs}
+        canUse={canUseReset}
+        onUse={useReset}
+        readError={entry.type === 'claude' && claudeReset.message === 'read_error'}
+      />
+
+      <button
+        type="button"
+        className={styles.iconButton}
+        disabled={!canRefresh || loading}
+        onClick={onRefresh}
+        aria-label={refreshLabel}
+        title={refreshLabel}
+      >
+        <IconRefreshCw size={16} aria-hidden="true" className={loading ? styles.spin : undefined} />
+      </button>
     </div>
   );
 }

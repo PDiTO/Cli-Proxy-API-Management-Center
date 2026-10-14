@@ -291,6 +291,28 @@ export function buildProviderSummaries(
     .filter((summary): summary is OverviewProviderSummary => summary !== null);
 }
 
+const EMAIL_PATTERN = /([A-Za-z0-9._%+-])[A-Za-z0-9._%+-]*@([A-Za-z0-9.-]+\.[A-Za-z]{2,})/g;
+
+/** Mask the local part of every email address: `pdavis@x.com` becomes `p•••@x.com`. */
+export const maskEmails = (text: string): string => text.replace(EMAIL_PATTERN, '$1•••@$2');
+
+export const containsEmail = (text: string): boolean => new RegExp(EMAIL_PATTERN).test(text);
+
+/** The account's Note when set (Auth Files › details), otherwise its email or file name. */
+export const credentialLabel = (file: AuthFileItem): string =>
+  file.note?.trim() || file.email?.trim() || file.name;
+
+export type ResetUrgency = 'day' | 'week' | 'later' | 'none';
+
+/** Reset credits expiring within a day are urgent; within a week, a warning. */
+export function resetUrgency(expiresAtMs: number | null, nowMs: number): ResetUrgency {
+  if (expiresAtMs === null) return 'none';
+  const left = expiresAtMs - nowMs;
+  if (left <= 24 * 3_600_000) return 'day';
+  if (left <= 7 * 24 * 3_600_000) return 'week';
+  return 'later';
+}
+
 /** "2d 3h", "4h 10m", "12m": compact time until an instant. */
 export function formatCountdown(targetMs: number, nowMs: number): string {
   const minutes = Math.max(0, Math.round((targetMs - nowMs) / 60000));

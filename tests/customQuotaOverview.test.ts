@@ -3,6 +3,9 @@ import {
   backAtMs,
   buildOverviewCredential,
   buildProviderSummaries,
+  credentialLabel,
+  maskEmails,
+  resetUrgency,
   firstInLine,
   formatCountdown,
   pickPrimaryWindow,
@@ -145,5 +148,21 @@ describe('quota overview model', () => {
     expect(formatCountdown(NOW + 51 * HOUR, NOW)).toBe('2d 3h');
     expect(formatCountdown(NOW + 4.5 * HOUR, NOW)).toBe('4h 30m');
     expect(formatCountdown(NOW + 12 * 60_000, NOW)).toBe('12m');
+  });
+
+  test('masks email local parts and prefers the account note', () => {
+    expect(maskEmails('pdavis@example.com')).toBe('p•••@example.com');
+    // Hyphens are valid in local parts, so a file-name prefix is hidden with the address.
+    expect(maskEmails('claude-114cec5c-pdavis@example.com.json')).toBe('c•••@example.com.json');
+    expect(maskEmails('no email here')).toBe('no email here');
+    expect(credentialLabel({ name: 'a.json', email: 'x@y.com', note: ' Work Max ' })).toBe('Work Max');
+    expect(credentialLabel({ name: 'a.json', email: 'x@y.com' })).toBe('x@y.com');
+  });
+
+  test('reset urgency: red within a day, yellow within a week', () => {
+    expect(resetUrgency(NOW + 3 * HOUR, NOW)).toBe('day');
+    expect(resetUrgency(NOW + 3 * 24 * HOUR, NOW)).toBe('week');
+    expect(resetUrgency(NOW + 9 * 24 * HOUR, NOW)).toBe('later');
+    expect(resetUrgency(null, NOW)).toBe('none');
   });
 });

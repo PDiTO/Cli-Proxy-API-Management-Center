@@ -6,13 +6,13 @@
  * quota store, loader and actions, so both quota pages share one cache.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { authFilesApi } from '@/services/api';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { IconRefreshCw, IconSearch, IconX } from '@/components/ui/icons';
+import { IconEye, IconEyeOff, IconRefreshCw, IconSearch, IconX } from '@/components/ui/icons';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
@@ -34,11 +34,13 @@ import { QUOTA_ADAPTERS, type QuotaCardState } from '@/features/quota/providers'
 import type { QuotaProviderType } from '@/features/quota/providers/types';
 import { useQuotaActions } from '@/features/quota/hooks/useQuotaActions';
 import { useQuotaBatchLoader } from '@/features/quota/hooks/useQuotaBatchLoader';
-import { LedgerRow, ProviderSummaryCard } from './components';
+import { LedgerHeader, LedgerRow, ProviderSummaryCard } from './components';
 import {
   OVERVIEW_SORT_MODES,
   buildOverviewCredential,
   buildProviderSummaries,
+  credentialLabel,
+  maskEmails,
   firstInLine,
   sortCredentials,
   type OverviewSortMode,
@@ -56,10 +58,11 @@ interface UiState {
   tab: QuotaTabId;
   sort: OverviewSortMode;
   view: ViewMode;
+  hideEmails: boolean;
 }
 
 const readUiState = (): UiState => {
-  const fallback: UiState = { tab: 'all', sort: 'routing', view: 'ledger' };
+  const fallback: UiState = { tab: 'all', sort: 'routing', view: 'ledger', hideEmails: true };
   try {
     const parsed = JSON.parse(localStorage.getItem(UI_STATE_KEY) ?? '{}') as Partial<UiState>;
     return {
@@ -68,6 +71,7 @@ const readUiState = (): UiState => {
         ? (parsed.sort as OverviewSortMode)
         : fallback.sort,
       view: VIEW_MODES.includes(parsed.view as ViewMode) ? (parsed.view as ViewMode) : fallback.view,
+      hideEmails: typeof parsed.hideEmails === 'boolean' ? parsed.hideEmails : fallback.hideEmails,
     };
   } catch {
     return fallback;
@@ -79,8 +83,6 @@ const matchesSearch = (file: AuthFileItem, query: string) => {
   const haystack = [file.name, file.email, file.note].filter(Boolean).join(' ').toLowerCase();
   return haystack.includes(query);
 };
-
-const displayNameFor = (name: string) => name;
 
 export function QuotaOverviewPage() {
   const { t } = useTranslation();
@@ -197,6 +199,14 @@ export function QuotaOverviewPage() {
   );
   const firstNames = useMemo(() => firstInLine(credentials), [credentials]);
   const tabCounts = useMemo(() => buildTabCounts(entries), [entries]);
+  // Timeline lanes are labelled by file name; show the account's Note, masking emails.
+  const displayNameFor = useMemo(() => {
+    const labels = new Map(entries.map((entry) => [entry.file.name, credentialLabel(entry.file)]));
+    return (name: string) => {
+      const label = labels.get(name) ?? name;
+      return ui.hideEmails ? maskEmails(label) : label;
+    };
+  }, [entries, ui.hideEmails]);
 
   const query = search.trim().toLowerCase();
   const visible = useMemo(() => {
@@ -307,7 +317,10 @@ export function QuotaOverviewPage() {
         <EmptyState title={t('pd_overview.empty_title')} description={t('pd_overview.empty_desc')} />
       ) : (
         <>
-          <div className={styles.summaryGrid}>
+          <div
+            className={styles.summaryGrid}
+            style={{ '--summary-columns': Math.min(summaries.length, 4) } as CSSProperties}
+          >
             {summaries.map((summary) => (
               <ProviderSummaryCard
                 key={summary.provider}
@@ -355,6 +368,20 @@ export function QuotaOverviewPage() {
               )}
             </div>
             <div className={styles.toolbarSelects}>
+              <button
+                type="button"
+                className={styles.iconButton}
+                onClick={() => updateUi({ hideEmails: !ui.hideEmails })}
+                aria-pressed={ui.hideEmails}
+                aria-label={ui.hideEmails ? t('pd_overview.show_emails') : t('pd_overview.hide_emails')}
+                title={`${ui.hideEmails ? t('pd_overview.show_emails') : t('pd_overview.hide_emails')}. ${t('pd_overview.name_hint')}`}
+              >
+                {ui.hideEmails ? (
+                  <IconEyeOff size={16} aria-hidden="true" />
+                ) : (
+                  <IconEye size={16} aria-hidden="true" />
+                )}
+              </button>
               <Select
                 value={ui.view}
                 options={viewOptions}
@@ -376,6 +403,7 @@ export function QuotaOverviewPage() {
             <EmptyState title={t('pd_overview.search_empty_title')} />
           ) : ui.view === 'ledger' ? (
             <div className={styles.ledger}>
+              <LedgerHeader />
               {visible.map((credential) => (
                 <LedgerRow
                   key={`${credential.entry.type}:${getQuotaCacheKey(credential.entry.file)}`}
@@ -383,6 +411,7 @@ export function QuotaOverviewPage() {
                   resolvedTheme={resolvedTheme}
                   nowMs={nowMs}
                   firstInLine={firstNames.has(credential.entry.file.name)}
+                  hideEmails={ui.hideEmails}
                   canRefresh={canUseActions && !credential.entry.file.disabled}
                   resetting={resettingQuotaName === getQuotaCacheKey(credential.entry.file)}
                   onRefresh={() =>
@@ -395,7 +424,7 @@ export function QuotaOverviewPage() {
               ))}
             </div>
           ) : (
-            <div className={styles.cardGrid}>
+            <div className={`${styles.cardGrid} ${ui.hideEmails ? styles.redactCards : ''}`}>
               {visible.map((credential) => (
                 <QuotaCard
                   key={`${credential.entry.type}:${getQuotaCacheKey(credential.entry.file)}`}

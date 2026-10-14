@@ -48,21 +48,32 @@
 
 .summaryGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 1px;
+  // --summary-columns is the provider count (max 4), set inline by the page.
+  grid-template-columns: repeat(var(--summary-columns, 1), minmax(0, 360px));
+  width: fit-content;
+  max-width: 100%;
   overflow: hidden;
   border: 1px solid var(--border-color);
   border-radius: 14px;
-  background: var(--border-color);
+  background: var(--bg-primary);
+
+  @media (max-width: 900px) {
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+  }
 }
 
 .summaryCard {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-width: 0;
   padding: 16px 18px;
   background: var(--bg-primary);
-  min-width: 0;
+  // Hairline separators that also work when cards wrap onto a second row.
+  box-shadow:
+    -1px 0 0 var(--border-color),
+    0 -1px 0 var(--border-color);
 }
 
 .summaryCardActive {
@@ -267,7 +278,7 @@
 
 .row {
   display: grid;
-  grid-template-columns: minmax(230px, 1.2fr) minmax(0, 3fr) minmax(190px, auto);
+  grid-template-columns: minmax(230px, 1.2fr) minmax(0, 3fr) minmax(200px, 0.9fr) 36px;
   gap: 18px;
   align-items: center;
   padding: 14px 18px;
@@ -282,9 +293,120 @@
   }
 
   @media (max-width: 1100px) {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr 36px;
     gap: 12px;
+
+    > :not(:last-child) {
+      grid-column: 1;
+    }
+
+    > :last-child {
+      grid-column: 2;
+      grid-row: 1;
+    }
   }
+}
+
+.rowHeader {
+  padding-top: 10px;
+  padding-bottom: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+
+  @media (max-width: 1100px) {
+    display: none;
+  }
+}
+
+.rowResets {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.resetList {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.resetDate {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.urgencyWeek,
+.urgencyWeek .resetDate {
+  color: var(--quota-medium-color, #e0aa14);
+}
+
+.urgencyDay,
+.urgencyDay .resetDate {
+  color: var(--viz-failure, #c65746);
+}
+
+.iconButton {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background var(--dur-hover, 150ms) var(--ease-out-strong, ease-out);
+
+  &:hover:not(:disabled) {
+    background: var(--bg-hover);
+  }
+
+  &:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+  }
+}
+
+.spin {
+  animation: pd-spin 900ms linear infinite;
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
+}
+
+@keyframes pd-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.redacted {
+  filter: blur(5px);
+  user-select: none;
+}
+
+// Upstream cards print the file name, which carries the account email.
+.redactCards :global([class*='QuotaCard-module__fileName']) {
+  filter: blur(5px);
+  user-select: none;
 }
 
 .rowIdentity {
@@ -364,32 +486,6 @@
   color: var(--text-secondary);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.rowActions {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 6px;
-
-  @media (max-width: 1100px) {
-    align-items: flex-start;
-  }
-}
-
-.resetInfo {
-  display: flex;
-  flex-direction: column;
-  align-items: inherit;
-  font-size: 12.5px;
-  color: var(--text-primary);
-}
-
-.rowButtons {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 4px;
 }
 
 /* ---------- cards ---------- */
