@@ -370,12 +370,12 @@
 }
 
 .chipButton {
-  height: 26px;
-  padding: 0 6px;
-  border: 0;
+  height: 24px;
+  padding: 0 4px;
+  border: 1px solid var(--text-primary);
   border-radius: 4px;
-  background: var(--text-primary);
-  color: var(--bg-primary);
+  background: transparent;
+  color: var(--text-primary);
   font: inherit;
   font-size: 12px;
   font-weight: 600;
