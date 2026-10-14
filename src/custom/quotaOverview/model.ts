@@ -313,6 +313,18 @@ export function resetUrgency(expiresAtMs: number | null, nowMs: number): ResetUr
   return 'later';
 }
 
+/** "8 days", "5 hours", "40 minutes": the largest whole unit left, without "in". */
+export function formatTimeLeft(targetMs: number, nowMs: number, locale?: string): string {
+  const minutes = Math.max(0, Math.round((targetMs - nowMs) / 60000));
+  const [value, unit] =
+    minutes >= 2880
+      ? [Math.floor(minutes / 1440), 'day']
+      : minutes >= 120
+        ? [Math.floor(minutes / 60), 'hour']
+        : [minutes, 'minute'];
+  return new Intl.NumberFormat(locale, { style: 'unit', unit, unitDisplay: 'long' }).format(value);
+}
+
 /** "2d 3h", "4h 10m", "12m": compact time until an instant. */
 export function formatCountdown(targetMs: number, nowMs: number): string {
   const minutes = Math.max(0, Math.round((targetMs - nowMs) / 60000));

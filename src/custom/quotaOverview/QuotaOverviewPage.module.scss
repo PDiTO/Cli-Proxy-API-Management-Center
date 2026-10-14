@@ -330,9 +330,9 @@
 }
 
 .resetList {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+  display: grid;
+  grid-template-columns: max-content max-content max-content;
+  gap: 3px 12px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -340,19 +340,125 @@
   color: var(--text-secondary);
 }
 
-.resetDate {
-  font-weight: 600;
-  color: var(--text-primary);
+.resetList li {
+  display: contents;
 }
 
-.urgencyWeek,
-.urgencyWeek .resetDate {
+.resetDate {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.resetLeft {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.resetCount {
+  font-weight: 600;
+}
+
+.urgencyWeek .resetLeft {
   color: var(--quota-medium-color, #e0aa14);
 }
 
-.urgencyDay,
-.urgencyDay .resetDate {
+.urgencyDay .resetLeft {
   color: var(--viz-failure, #c65746);
+}
+
+.chipButton {
+  height: 26px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--dur-hover, 150ms) var(--ease-out-strong, ease-out);
+
+  &:hover:not(:disabled) {
+    background: var(--bg-hover);
+  }
+
+  &:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+  }
+}
+
+.renameButton,
+.tinyButton {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 1px;
+  }
+}
+
+.renameButton {
+  opacity: 0;
+  transition: opacity var(--dur-hover, 150ms) var(--ease-out-strong, ease-out);
+
+  .row:hover &,
+  &:focus-visible {
+    opacity: 1;
+  }
+
+  @media (hover: none) {
+    opacity: 1;
+  }
+}
+
+.nameEditor {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.nameInput {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border-hover);
+  border-radius: 7px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+
+  &:focus {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 1px;
+  }
 }
 
 .iconButton {
@@ -401,12 +507,22 @@
 .redacted {
   filter: blur(5px);
   user-select: none;
+  transition: filter var(--dur-hover, 150ms) var(--ease-out-strong, ease-out);
+
+  &:hover {
+    filter: none;
+    user-select: text;
+  }
 }
 
 // Upstream cards print the file name, which carries the account email.
 .redactCards :global([class*='QuotaCard-module__fileName']) {
   filter: blur(5px);
   user-select: none;
+
+  &:hover {
+    filter: none;
+  }
 }
 
 .rowIdentity {
@@ -462,6 +578,7 @@
 }
 
 .window {
+  font-variant-numeric: tabular-nums;
   display: flex;
   flex-direction: column;
   gap: 5px;

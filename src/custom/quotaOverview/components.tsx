@@ -2,9 +2,9 @@
  * Quota Overview building blocks: provider summary cards and ledger rows.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { IconRefreshCw } from '@/components/ui/icons';
+import { IconCheck, IconPencil, IconRefreshCw, IconX } from '@/components/ui/icons';
 import type { ResolvedTheme } from '@/types';
 import { formatInstantShort, formatRelativeInstant } from '@/utils/quota';
 import {
@@ -24,6 +24,7 @@ import {
   containsEmail,
   credentialLabel,
   formatCountdown,
+  formatTimeLeft,
   maskEmails,
   resetUrgency,
   type ResetUrgency,
@@ -180,6 +181,72 @@ function Private({ text, hide, className }: { text: string; hide: boolean; class
   );
 }
 
+/** Inline editor for the account's CLIProxy Note, which the page uses as its name. */
+function NameEditor({
+  initial,
+  onSave,
+  onClose,
+}: {
+  initial: string;
+  onSave: (note: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const [value, setValue] = useState(initial);
+  const [saving, setSaving] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => inputRef.current?.select(), []);
+  const save = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await onSave(value.trim());
+      onClose();
+    } catch {
+      setSaving(false);
+    }
+  };
+  return (
+    <form
+      className={styles.nameEditor}
+      onSubmit={(event) => {
+        event.preventDefault();
+        void save();
+      }}
+    >
+      <input
+        ref={inputRef}
+        className={styles.nameInput}
+        value={value}
+        maxLength={80}
+        onChange={(event) => setValue(event.target.value)}
+        onKeyDown={(event) => event.key === 'Escape' && onClose()}
+        placeholder={t('pd_overview.name_placeholder')}
+        aria-label={t('pd_overview.name_label')}
+        disabled={saving}
+      />
+      <button
+        type="submit"
+        className={styles.tinyButton}
+        disabled={saving}
+        aria-label={t('pd_overview.name_save')}
+        title={t('pd_overview.name_save')}
+      >
+        <IconCheck size={14} aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        className={styles.tinyButton}
+        onClick={onClose}
+        aria-label={t('pd_overview.name_cancel')}
+        title={t('pd_overview.name_cancel')}
+      >
+        <IconX size={14} aria-hidden="true" />
+      </button>
+    </form>
+  );
+}
+
 const urgencyClass: Record<ResetUrgency, string> = {
   day: styles.urgencyDay,
   week: styles.urgencyWeek,
@@ -207,7 +274,7 @@ function ResetsCell({
   onUse: () => void;
   readError?: boolean;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   if (credits === null) {
     return (
       <div className={styles.rowResets}>
@@ -230,24 +297,23 @@ function ResetsCell({
               className={urgencyClass[resetUrgency(credit.expiresAtMs, nowMs)]}
               title={credit.label ?? undefined}
             >
-              {credit.count > 1 && (
-                <strong>{t('pd_overview.reset_count', { count: credit.count })} </strong>
-              )}
-              {credit.expiresAtMs === null ? (
-                t('pd_overview.no_expiry')
-              ) : (
-                <>
-                  <span className={styles.resetDate}>{formatInstantShort(credit.expiresAtMs)}</span>
-                  {' · '}
-                  {formatRelativeInstant(credit.expiresAtMs, nowMs)}
-                </>
-              )}
+              <span className={styles.resetDate}>
+                {credit.expiresAtMs === null
+                  ? t('pd_overview.no_expiry')
+                  : formatInstantShort(credit.expiresAtMs)}
+              </span>
+              <span className={styles.resetLeft}>
+                {credit.expiresAtMs === null ? '' : formatTimeLeft(credit.expiresAtMs, nowMs, i18n.language)}
+              </span>
+              <span className={styles.resetCount}>
+                {credit.count > 1 ? t('pd_overview.reset_count', { count: credit.count }) : ''}
+              </span>
             </li>
           ))}
         </ul>
       )}
       {sorted.length > 0 && (
-        <button type="button" className={styles.ghostButton} disabled={!canUse} onClick={onUse}>
+        <button type="button" className={styles.chipButton} disabled={!canUse} onClick={onUse}>
           {t('pd_overview.use_reset')}
         </button>
       )}
@@ -273,10 +339,12 @@ export interface LedgerRowProps {
   nowMs: number;
   firstInLine: boolean;
   hideEmails: boolean;
+  tier?: string | null;
   canRefresh: boolean;
   resetting: boolean;
   onRefresh: () => void;
   onReset: () => void;
+  onRename: (note: string) => Promise<void>;
 }
 
 export function LedgerRow({
@@ -285,11 +353,14 @@ export function LedgerRow({
   nowMs,
   firstInLine,
   hideEmails,
+  tier,
   canRefresh,
   resetting,
   onRefresh,
   onReset,
+  onRename,
 }: LedgerRowProps) {
+  const [editing, setEditing] = useState(false);
   const { t, i18n } = useTranslation();
   const { entry, quota } = credential;
   const file = entry.file;
@@ -343,7 +414,9 @@ export function LedgerRow({
   }
 
   const name = credentialLabel(file);
-  const planLabel = credential.plan
+  const planLabel = tier
+    ? tier
+    : credential.plan
     ? [`${adapter.i18nPrefix}.${credential.plan}`, `${adapter.i18nPrefix}.plan_${credential.plan}`]
         .filter((key) => i18n.exists(key))
         .map((key) => t(key))[0] ?? credential.plan
@@ -355,7 +428,26 @@ export function LedgerRow({
       <div className={styles.rowIdentity}>
         <div className={styles.rowName}>
           <ProviderIcon provider={entry.type} resolvedTheme={resolvedTheme} />
-          <Private text={name} hide={hideEmails} className={styles.mono} />
+          {editing ? (
+            <NameEditor
+              initial={file.note?.trim() ?? ''}
+              onSave={onRename}
+              onClose={() => setEditing(false)}
+            />
+          ) : (
+            <>
+              <Private text={name} hide={hideEmails} className={styles.mono} />
+              <button
+                type="button"
+                className={styles.renameButton}
+                onClick={() => setEditing(true)}
+                aria-label={t('pd_overview.name_edit')}
+                title={t('pd_overview.name_edit')}
+              >
+                <IconPencil size={13} aria-hidden="true" />
+              </button>
+            </>
+          )}
         </div>
         <div className={styles.rowMeta}>
           <span

@@ -8,10 +8,12 @@ import {
   resetUrgency,
   firstInLine,
   formatCountdown,
+  formatTimeLeft,
   pickPrimaryWindow,
   sortCredentials,
   type OverviewWindow,
 } from '@/custom/quotaOverview/model';
+import { formatClaudeTier } from '@/custom/quotaOverview/useClaudeTiers';
 import type { QuotaCardState } from '@/features/quota/providers';
 import type { AuthFileItem } from '@/types';
 
@@ -164,5 +166,18 @@ describe('quota overview model', () => {
     expect(resetUrgency(NOW + 3 * 24 * HOUR, NOW)).toBe('week');
     expect(resetUrgency(NOW + 9 * 24 * HOUR, NOW)).toBe('later');
     expect(resetUrgency(null, NOW)).toBe('none');
+  });
+
+  test('formats Claude tiers from the profile rate_limit_tier', () => {
+    expect(formatClaudeTier('default_claude_max_20x')).toBe('Max 20x');
+    expect(formatClaudeTier('default_claude_max_5x')).toBe('Max 5x');
+    expect(formatClaudeTier('default_claude_pro')).toBe('Pro');
+    expect(formatClaudeTier(undefined)).toBeNull();
+  });
+
+  test('time left is the largest whole unit, without "in"', () => {
+    expect(formatTimeLeft(NOW + 8.4 * 24 * HOUR, NOW, 'en')).toBe('8 days');
+    expect(formatTimeLeft(NOW + 30 * HOUR, NOW, 'en')).toBe('30 hours');
+    expect(formatTimeLeft(NOW + 40 * 60_000, NOW, 'en')).toBe('40 minutes');
   });
 });

@@ -59,7 +59,14 @@ const en = {
   reset_count: '×{{count}}',
   hide_emails: 'Hide email addresses',
   show_emails: 'Show email addresses',
-  name_hint: 'Name accounts with a Note under Auth Files › details',
+  name_hint: 'Hover a blurred name to reveal it, or give the account a name with the pencil',
+  name_edit: 'Name this account (saved as its CLIProxy note)',
+  name_label: 'Account name',
+  name_placeholder: 'e.g. Work Max',
+  name_save: 'Save name',
+  name_cancel: 'Cancel',
+  name_saved: 'Account name saved',
+  name_failed: 'Could not save the account name',
 };
 
 for (const language of Object.keys(i18n.options.resources ?? {})) {

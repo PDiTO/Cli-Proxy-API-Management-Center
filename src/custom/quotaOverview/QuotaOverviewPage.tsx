@@ -17,7 +17,7 @@ import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { useNow } from '@/hooks/useNow';
-import { useAuthStore, useQuotaStore, useThemeStore } from '@/stores';
+import { useAuthStore, useNotificationStore, useQuotaStore, useThemeStore } from '@/stores';
 import type { AuthFileItem, ResolvedTheme } from '@/types';
 import { getQuotaCacheKey } from '@/utils/quota/identity';
 import { ProviderTabs } from '@/features/authFiles/components/ProviderTabs';
@@ -45,6 +45,7 @@ import {
   sortCredentials,
   type OverviewSortMode,
 } from './model';
+import { useClaudeTiers } from './useClaudeTiers';
 import styles from './QuotaOverviewPage.module.scss';
 
 const TAB_IDS: string[] = ['all', ...QUOTA_TAB_ORDER];
@@ -233,6 +234,27 @@ export function QuotaOverviewPage() {
 
   /* ---------- loading and actions ---------- */
 
+  const claudeFiles = useMemo(
+    () => entries.filter((entry) => entry.type === 'claude').map((entry) => entry.file),
+    [entries]
+  );
+  const claudeTiers = useClaudeTiers(claudeFiles, connectionStatus === 'connected');
+
+  const showNotification = useNotificationStore((state) => state.showNotification);
+  const renameCredential = useCallback(
+    async (file: AuthFileItem, note: string) => {
+      try {
+        await authFilesApi.patchFields(file.name, { note });
+        showNotification(t('pd_overview.name_saved'), 'success');
+        await loadFiles();
+      } catch (err) {
+        showNotification(t('pd_overview.name_failed'), 'error');
+        throw err;
+      }
+    },
+    [loadFiles, showNotification, t]
+  );
+
   const { batchLoading, loadQuota } = useQuotaBatchLoader();
   const { resettingQuotaName, refreshQuota, resetQuota } = useQuotaActions(disableControls);
   const canUseActions = !disableControls && !loading;
@@ -412,6 +434,8 @@ export function QuotaOverviewPage() {
                   nowMs={nowMs}
                   firstInLine={firstNames.has(credential.entry.file.name)}
                   hideEmails={ui.hideEmails}
+                  tier={credential.entry.type === 'claude' ? claudeTiers[credential.entry.file.name] : null}
+                  onRename={(note) => renameCredential(credential.entry.file, note)}
                   canRefresh={canUseActions && !credential.entry.file.disabled}
                   resetting={resettingQuotaName === getQuotaCacheKey(credential.entry.file)}
                   onRefresh={() =>
