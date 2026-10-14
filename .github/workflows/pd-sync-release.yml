@@ -1,0 +1,98 @@
+# Fork-only: merge upstream, verify, and publish management.html (see src/custom/README.md).
+name: Sync upstream and release
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: pd-sync-release
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: https://github.com/router-for-me/Cli-Proxy-API-Management-Center.git
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  sync-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Merge upstream main
+        id: merge
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add upstream "$UPSTREAM"
+          git fetch --tags upstream main
+          before=$(git rev-parse HEAD)
+          if ! git merge --no-edit upstream/main; then
+            git merge --abort || true
+            echo "failure=Merging upstream/main conflicts with the fork's changes." >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "merged=$([ "$before" != "$(git rev-parse HEAD)" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+
+      - name: Verify
+        run: |
+          bun install --frozen-lockfile
+          bun run verify
+
+      - name: Push merge
+        if: steps.merge.outputs.merged == 'true'
+        run: git push origin HEAD:main
+
+      - name: Publish release
+        run: |
+          set -euo pipefail
+          base=$(git describe --tags --abbrev=0 --match 'v*' upstream/main)
+          tag="pd-${base}-$(git rev-parse --short HEAD)"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists"
+            exit 0
+          fi
+          VERSION="$tag" bun run build
+          mv dist/index.html dist/management.html
+          {
+            echo "Upstream $base plus fork customizations (src/custom)."
+            echo
+            git log --oneline -15
+          } > notes.md
+          gh release create "$tag" dist/management.html --title "$tag" --notes-file notes.md \
+            --target "$(git rev-parse HEAD)" --latest
+
+      - name: Report failure
+        if: failure()
+        run: |
+          title='Upstream sync or release failed'
+          body="Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          ${{ steps.merge.outputs.failure }}
+
+          Merge locally: \`git fetch upstream && git merge upstream/main && bun run verify && git push origin main\`.
+          If the push was rejected for touching .github/workflows, the local merge is the fix."
+          existing=$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
