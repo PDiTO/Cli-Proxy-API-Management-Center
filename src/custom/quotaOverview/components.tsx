@@ -4,7 +4,14 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { IconCheck, IconPencil, IconRefreshCw, IconX } from '@/components/ui/icons';
+import {
+  IconCheck,
+  IconChevronDown,
+  IconPencil,
+  IconRefreshCw,
+  IconX,
+  type IconProps,
+} from '@/components/ui/icons';
 import type { ResolvedTheme } from '@/types';
 import { formatInstantShort, formatRelativeInstant } from '@/utils/quota';
 import {
@@ -52,6 +59,31 @@ function Bar({ percent }: { percent: number | null }) {
   );
 }
 
+/** Lucide "ticket" (ISC), kept here so upstream's icon set stays untouched. */
+function IconTicket({ size = 20, ...props }: IconProps) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      {...props}
+    >
+      <path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z" />
+      <path d="M13 5v2" />
+      <path d="M13 17v2" />
+      <path d="M13 11v2" />
+    </svg>
+  );
+}
+
 function ProviderIcon({
   provider,
   resolvedTheme,
@@ -74,18 +106,28 @@ function ResetWhen({ atMs, nowMs }: { atMs: number | null; nowMs: number }) {
   }
   return (
     <span className={styles.muted}>
-      <strong className={styles.relative}>{formatRelativeInstant(atMs, nowMs, i18n.language)}</strong>
+      <strong className={styles.relative}>
+        {formatRelativeInstant(atMs, nowMs, i18n.language)}
+      </strong>
       {' · '}
       {formatInstantShort(atMs)}
     </span>
   );
 }
 
-function SummaryLine({ line, nowMs }: { line: OverviewSummaryLine; nowMs: number }) {
+function SummaryLine({
+  line,
+  nowMs,
+  hideLabel = false,
+}: {
+  line: OverviewSummaryLine;
+  nowMs: number;
+  hideLabel?: boolean;
+}) {
   const { t } = useTranslation();
   return (
     <div className={styles.summaryLine}>
-      <div className={styles.summaryLabel}>{line.label}</div>
+      {!hideLabel && <div className={styles.summaryLabel}>{line.label}</div>}
       <div className={styles.summaryValue}>
         <span className={styles.summaryBig}>{Math.round(line.remaining)}%</span>
         <span className={styles.muted}>{t('pd_overview.of_total', { total: line.total })}</span>
@@ -116,6 +158,8 @@ export function ProviderSummaryCard({
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const notLoaded = summary.credentialCount - summary.loadedCount;
+  // A single other limit keeps its label in the toggle; several keep theirs on each line.
+  const singleSecondary = summary.secondary.length === 1;
   return (
     <section className={`${styles.summaryCard} ${active ? styles.summaryCardActive : ''}`}>
       <button
@@ -140,27 +184,35 @@ export function ProviderSummaryCard({
       )}
       {summary.secondary.length > 0 && (
         <div className={styles.secondary}>
-          {expanded ? (
-            summary.secondary.map((line) => (
-              <SummaryLine key={line.id} line={line} nowMs={nowMs} />
-            ))
-          ) : (
-            <div className={styles.secondaryCollapsed}>
-              {summary.secondary.map((line) => (
-                <span key={line.id}>
-                  {line.label} <strong>{Math.round(line.remaining)}%</strong>
-                </span>
-              ))}
-            </div>
-          )}
           <button
             type="button"
-            className={styles.linkButton}
+            className={styles.disclosure}
             onClick={() => setExpanded((value) => !value)}
             aria-expanded={expanded}
           >
-            {expanded ? t('pd_overview.show_less') : t('pd_overview.show_more')}
+            <span className={styles.disclosureItems}>
+              {expanded && !singleSecondary ? (
+                <span>{t('pd_overview.other_limits')}</span>
+              ) : (
+                summary.secondary.map((line) => (
+                  <span key={line.id} className={styles.disclosureItem}>
+                    <span>{line.label}</span>
+                    {!expanded && (
+                      <span>
+                        <strong>{Math.round(line.remaining)}%</strong>{' '}
+                        {t('pd_overview.of_total', { total: line.total })}
+                      </span>
+                    )}
+                  </span>
+                ))
+              )}
+            </span>
+            <IconChevronDown size={16} aria-hidden="true" className={styles.chevron} />
           </button>
+          {expanded &&
+            summary.secondary.map((line) => (
+              <SummaryLine key={line.id} line={line} nowMs={nowMs} hideLabel={singleSecondary} />
+            ))}
         </div>
       )}
     </section>
@@ -287,6 +339,18 @@ function ResetsCell({
   );
   return (
     <div className={styles.rowResets}>
+      {sorted.length > 0 && (
+        <button
+          type="button"
+          className={styles.iconButton}
+          disabled={!canUse}
+          onClick={onUse}
+          aria-label={t('pd_overview.use_reset')}
+          title={t('pd_overview.use_reset')}
+        >
+          <IconTicket size={16} />
+        </button>
+      )}
       {sorted.length === 0 ? (
         <span className={styles.muted}>{t('pd_overview.no_resets')}</span>
       ) : (
@@ -303,7 +367,9 @@ function ResetsCell({
                   : formatInstantShort(credit.expiresAtMs)}
               </span>
               <span className={styles.resetLeft}>
-                {credit.expiresAtMs === null ? '' : formatTimeLeft(credit.expiresAtMs, nowMs, i18n.language)}
+                {credit.expiresAtMs === null
+                  ? ''
+                  : formatTimeLeft(credit.expiresAtMs, nowMs, i18n.language)}
               </span>
               <span className={styles.resetCount}>
                 {credit.count > 1 ? t('pd_overview.reset_count', { count: credit.count }) : ''}
@@ -311,11 +377,6 @@ function ResetsCell({
             </li>
           ))}
         </ul>
-      )}
-      {sorted.length > 0 && (
-        <button type="button" className={styles.chipButton} disabled={!canUse} onClick={onUse}>
-          {t('pd_overview.use_reset')}
-        </button>
       )}
     </div>
   );
@@ -417,10 +478,13 @@ export function LedgerRow({
   const planLabel = tier
     ? tier
     : credential.plan
-    ? [`${adapter.i18nPrefix}.${credential.plan}`, `${adapter.i18nPrefix}.plan_${credential.plan}`]
-        .filter((key) => i18n.exists(key))
-        .map((key) => t(key))[0] ?? credential.plan
-    : null;
+      ? ([
+          `${adapter.i18nPrefix}.${credential.plan}`,
+          `${adapter.i18nPrefix}.plan_${credential.plan}`,
+        ]
+          .filter((key) => i18n.exists(key))
+          .map((key) => t(key))[0] ?? credential.plan)
+      : null;
   const refreshLabel = status === 'idle' ? t('pd_overview.load') : t('pd_overview.refresh');
 
   return (
@@ -490,7 +554,9 @@ export function LedgerRow({
                 <span className={styles.windowLabel} title={window.label}>
                   {window.label}
                 </span>
-                <strong>{window.remaining === null ? '–' : `${Math.round(window.remaining)}%`}</strong>
+                <strong>
+                  {window.remaining === null ? '–' : `${Math.round(window.remaining)}%`}
+                </strong>
               </div>
               <Bar percent={window.remaining} />
               <ResetWhen atMs={window.resetAtMs} nowMs={nowMs} />

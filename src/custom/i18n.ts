@@ -30,8 +30,7 @@ const en = {
   credential_count_other: '{{count}} credentials',
   not_loaded: '{{count}} not loaded',
   resets: '{{relative}} · {{date}}',
-  show_more: 'Show',
-  show_less: 'Hide',
+  other_limits: 'Other limits',
   first_in_line: 'First in line',
   first_in_line_hint:
     'New sessions use this credential first under fill-first routing. Running sessions can stay on another one.',
@@ -52,7 +51,7 @@ const en = {
   col_account: 'Account',
   col_limits: 'Usage limits',
   col_resets: 'Resets',
-  use_reset: 'Use Reset',
+  use_reset: 'Use a reset',
   no_resets: 'No resets available',
   resets_unreadable: 'Resets could not be read',
   no_expiry: 'No expiry',

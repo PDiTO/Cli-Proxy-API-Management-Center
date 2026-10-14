@@ -149,15 +149,60 @@
   border-top: 1px solid var(--border-color);
 }
 
-.secondaryCollapsed {
+.disclosure {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  font-size: 12.5px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
   color: var(--text-secondary);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text-primary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
 
   strong {
     color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.disclosureItems {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.disclosureItem {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chevron {
+  flex: none;
+  transition: transform var(--dur-hover, 150ms) var(--ease-out-strong, ease-out);
+
+  [aria-expanded='true'] > & {
+    transform: rotate(180deg);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
   }
 }
 
@@ -323,9 +368,8 @@
 
 .rowResets {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
+  align-items: center;
+  gap: 12px;
   min-width: 0;
 }
 
@@ -367,34 +411,6 @@
 
 .urgencyDay .resetLeft {
   color: var(--viz-failure, #c65746);
-}
-
-.chipButton {
-  height: 24px;
-  padding: 0 4px;
-  border: 1px solid var(--text-primary);
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity var(--dur-hover, 150ms) var(--ease-out-strong, ease-out);
-
-  &:hover:not(:disabled) {
-    opacity: 0.85;
-  }
-
-  &:disabled {
-    opacity: 0.45;
-    cursor: default;
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--primary-color);
-    outline-offset: 2px;
-  }
 }
 
 .renameButton,
