@@ -29,10 +29,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # The built-in token can't push upstream changes to .github/workflows.
-          # SYNC_TOKEN (see src/custom/README.md) can; without it, those merges
-          # stop at the push step and open an issue.
-          token: ${{ secrets.SYNC_TOKEN || github.token }}
+          # Keep tokens out of .git/config: the install and test steps run
+          # upstream's code and its dependencies. Only the push step gets one.
+          persist-credentials: false
 
       - name: Merge upstream main
         id: merge
@@ -67,9 +66,13 @@ jobs:
       - name: Push merge
         id: push
         if: steps.merge.outputs.merged == 'true'
+        env:
+          # The built-in token can't push upstream changes to .github/workflows;
+          # SYNC_TOKEN (see src/custom/README.md) can.
+          PUSH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
         run: |
           set -o pipefail
-          if ! git push origin HEAD:main 2>&1 | tee push.log; then
+          if ! git push "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main 2>&1 | tee push.log; then
             if grep -q -i 'workflow' push.log; then
               echo "failure=The merge changes .github/workflows, which this run's token can't push. Add or renew the SYNC_TOKEN secret (src/custom/README.md), or merge locally." >> "$GITHUB_OUTPUT"
             else
