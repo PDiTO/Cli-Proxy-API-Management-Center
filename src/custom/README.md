@@ -15,6 +15,10 @@ behavior, so upstream changes merge in cleanly.
   edit upstream locale files.
 - Reuse upstream data hooks, stores and components by importing them. If an upstream rename
   breaks the build, fix the import here rather than editing upstream code.
+- One temporary exception: `tests/authFileCooldowns.test.ts` pins its i18n language and compares
+  the reset hint as React escapes it. Upstream's version passes or fails depending on which test
+  files ran first. Drop the fork's change once upstream fixes the test; if a merge conflicts
+  there, take upstream's version and reapply the fix only if the test still depends on order.
 
 ## Pages
 
@@ -29,9 +33,19 @@ behavior, so upstream changes merge in cleanly.
 `.github/workflows/pd-sync-release.yml` runs every six hours, on demand and on pushes to `main`.
 It merges `router-for-me/Cli-Proxy-API-Management-Center` `main`, runs `bun run verify`, pushes
 the merge and publishes `management.html` as the latest release, tagged
-`pd-<upstream version>-<commit>`. A merge conflict or failed check opens an issue and publishes
-nothing. GitHub does not let the workflow push upstream changes to `.github/workflows/`; when
-that happens the run opens an issue, and the merge is done locally:
+`pd-<upstream version>-<commit>`. A merge conflict, failed check or refused push publishes
+nothing and comments on the open "Upstream sync or release failed" issue, naming which of the
+three happened.
+
+GitHub doesn't let a workflow's built-in token push changes to `.github/workflows/`, and
+upstream edits its own workflows from time to time. The workflow therefore pushes with the
+`SYNC_TOKEN` secret when it exists: a fine-grained personal access token for this repository
+only, with Contents and Workflows set to read and write. To create or renew it, go to GitHub
+Settings, Developer settings, Fine-grained tokens. Then run
+`gh secret set SYNC_TOKEN -R PDiTO/Cli-Proxy-API-Management-Center` and paste it at the prompt.
+When it expires, the failure issue says so.
+
+Without the token, or to fix anything else by hand, merge locally:
 
 ```bash
 git fetch upstream && git merge upstream/main && bun run verify && git push origin main
