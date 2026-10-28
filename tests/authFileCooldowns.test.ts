@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import i18n from '../src/i18n/index';
@@ -31,6 +31,10 @@ const render = (
   value?: AuthFileCooldownSnapshot,
   options: { resetting?: boolean; resetDisabled?: boolean; onReset?: () => void } = {}
 ) => renderToStaticMarkup(createElement(AuthFileCooldownSection, { snapshot: value, ...options }));
+// React escapes quotes inside attributes (' becomes &#x27;), so compare a
+// title against what React writes, not the raw translation.
+const asTitle = (text: string) =>
+  renderToStaticMarkup(createElement('span', { title: text })).slice('<span title="'.length, -'"></span>'.length);
 
 function response(files: Record<string, unknown>[]): AuthFilesResponse {
   return { observed_at: observedAt, files } as unknown as AuthFilesResponse;
@@ -202,6 +206,17 @@ describe('cooldown timer semantics', () => {
 });
 
 describe('cooldown section rendering', () => {
+  // Other test files change the shared i18n language without restoring it.
+  // Pin one here so these results don't depend on which files ran first.
+  let previousLanguage = '';
+  beforeAll(async () => {
+    previousLanguage = i18n.language;
+    await i18n.changeLanguage('en');
+  });
+  afterAll(async () => {
+    await i18n.changeLanguage(previousLanguage);
+  });
+
   test('does not add a panel for old servers or known-empty state', () => {
     expect(render()).toBe('');
     expect(render(normalize([]))).toBe('');
@@ -225,7 +240,7 @@ describe('cooldown section rendering', () => {
 
     const available = render(snapshot, { onReset: () => {} });
     expect(available).toContain(i18n.t('auth_files.cooldown_reset_button'));
-    expect(available).toContain(i18n.t('auth_files.cooldown_reset_hint'));
+    expect(available).toContain(asTitle(i18n.t('auth_files.cooldown_reset_hint')));
     expect(available).not.toContain('disabled=""');
 
     const pending = render(snapshot, { onReset: () => {}, resetting: true });
