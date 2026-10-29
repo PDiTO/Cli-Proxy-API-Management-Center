@@ -42,7 +42,7 @@ upstream edits its own workflows from time to time. The workflow therefore pushe
 `SYNC_TOKEN` secret when it exists: a fine-grained personal access token for this repository
 only, with Contents and Workflows set to read and write. To create or renew it, go to GitHub
 Settings, Developer settings, Fine-grained tokens. Then run
-`gh secret set SYNC_TOKEN -R PDiTO/Cli-Proxy-API-Management-Center` and paste it at the prompt.
+`gh secret set SYNC_TOKEN -R PDiTO/cpamc` and paste it at the prompt.
 When it expires, the failure issue says so.
 
 Without the token, or to fix anything else by hand, merge locally:
@@ -52,6 +52,6 @@ git fetch upstream && git merge upstream/main && bun run verify && git push orig
 ```
 
 CLIProxyAPI serves this build when its config has
-`management.panel-github-repository: "https://github.com/PDiTO/Cli-Proxy-API-Management-Center"`.
+`management.panel-github-repository: "https://github.com/PDiTO/cpamc"`.
 It checks for a new release every three hours. Pointing that setting back at the upstream
 repository restores the official panel.
