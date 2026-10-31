@@ -1,5 +1,6 @@
 /**
- * Quota Overview model: pure functions over the upstream quota cache.
+ * Quota Overview model: pure functions over the upstream quota cache and the
+ * quota CLIProxy observes from proxied traffic.
  *
  * Fork-only code (see src/custom/README.md). It reads the same quota states the
  * upstream Quota page stores, so provider fetching and parsing stay upstream's.
@@ -11,6 +12,10 @@ import type { QuotaFileEntry } from '@/features/quota/logic';
 import type { QuotaCardState } from '@/features/quota/providers';
 import type { QuotaProviderType } from '@/features/quota/providers/types';
 import type { AuthFileItem } from '@/types';
+import { getQuotaCacheKey } from '@/utils/quota/identity';
+import type { HistorySample, QuotaHistory } from './history';
+import { readPassiveQuota } from './passiveQuota';
+import type { PoolAccount } from './poolForecast';
 
 /** One limit on one credential, normalized to percent remaining. */
 export interface OverviewWindow {
@@ -34,29 +39,26 @@ export interface OverviewCredential {
   /** The proxy's own credential cooldown, from the auth-files snapshot. */
   cooldownUntilMs: number | null;
   priority: number;
+  /**
+   * Where the windows came from: a quota request made from this panel, or
+   * CLIProxy's reading of the credential's last proxied response.
+   */
+  source: 'live' | 'proxy' | null;
+  /** When the source read the limits; null when it doesn't say. */
+  observedAtMs: number | null;
+  /** The weekly reading as observed (before rolling past resets), for history. */
+  sample: HistorySample | null;
 }
 
-export interface OverviewSummaryLine {
-  id: string;
-  label: string;
-  /** Sum of percent remaining over credentials reporting this limit. */
-  remaining: number;
-  /** 100 per credential reporting this limit. */
-  total: number;
-  /** Per-credential remaining in routing order; null = not loaded or not reported. */
-  segments: (number | null)[];
-  soonestResetMs: number | null;
-}
-
-export interface OverviewProviderSummary {
+export interface OverviewProviderPool {
   provider: QuotaProviderType;
   credentialCount: number;
-  loadedCount: number;
-  primary: OverviewSummaryLine | null;
-  secondary: OverviewSummaryLine[];
+  /** Credentials with a weekly reading, in routing order. */
+  accounts: PoolAccount[];
 }
 
 const WEEKLY_HOURS = 168;
+const HOUR_MS = 3_600_000;
 
 const clampPercent = (value: number) => Math.min(100, Math.max(0, value));
 
@@ -153,12 +155,61 @@ const readPlan = (quota: QuotaCardState | undefined): string | null => {
   return typeof plan === 'string' && plan.trim() ? plan.trim() : null;
 };
 
+/** When a loaded quota state was fetched, if the provider adapter records it. */
+const liveObservedAtMs = (quota: QuotaCardState | undefined): number | null => {
+  const state = quota as { observedAt?: unknown; observedAtMs?: unknown } | undefined;
+  const at =
+    typeof state?.observedAtMs === 'number'
+      ? state.observedAtMs
+      : typeof state?.observedAt === 'string'
+        ? Date.parse(state.observedAt)
+        : NaN;
+  return Number.isFinite(at) ? at : null;
+};
+
+/**
+ * A reading taken before a window reset says nothing about the new window
+ * except that it started full: move such windows to 100% and their next reset.
+ */
+export function rollPastResets(
+  windows: readonly OverviewWindow[],
+  nowMs: number
+): OverviewWindow[] {
+  return windows.map((window) => {
+    if (window.resetAtMs === null || window.resetAtMs > nowMs) return window;
+    const periodMs = window.periodHours === null ? 0 : window.periodHours * HOUR_MS;
+    const resetAtMs =
+      periodMs > 0
+        ? window.resetAtMs + (Math.floor((nowMs - window.resetAtMs) / periodMs) + 1) * periodMs
+        : null;
+    return { ...window, remaining: window.remaining === null ? null : 100, resetAtMs };
+  });
+}
+
 export function buildOverviewCredential(
   entry: QuotaFileEntry,
   quota: QuotaCardState | undefined,
   nowMs: number
 ): OverviewCredential {
-  const windows = overviewWindows(entry.type, quota, entry.file.name);
+  const live = overviewWindows(entry.type, quota, entry.file.name);
+  const liveAt = live.length > 0 ? liveObservedAtMs(quota) : null;
+  const passive = readPassiveQuota(entry.type, entry.file);
+  let observed = live;
+  let source: OverviewCredential['source'] = live.length > 0 ? 'live' : null;
+  let observedAtMs = liveAt;
+  // Prefer whichever reading is newer; the proxy's lacks some limits, so keep
+  // the live ones it doesn't report.
+  if (passive && (liveAt === null || passive.observedAtMs > liveAt)) {
+    const byId = new Map(passive.windows.map((window) => [window.id, window]));
+    observed = [
+      ...live.map((window) => byId.get(window.id) ?? window),
+      ...passive.windows.filter((window) => !live.some((own) => own.id === window.id)),
+    ];
+    source = 'proxy';
+    observedAtMs = passive.observedAtMs;
+  }
+  const observedPrimary = pickPrimaryWindow(observed);
+  const windows = rollPastResets(observed, nowMs);
   return {
     entry,
     quota,
@@ -168,6 +219,12 @@ export function buildOverviewCredential(
     backAtMs: backAtMs(windows, nowMs),
     cooldownUntilMs: cooldownUntilMs(entry.file, nowMs),
     priority: typeof entry.file.priority === 'number' ? entry.file.priority : 0,
+    source,
+    observedAtMs,
+    sample:
+      observedPrimary && observedPrimary.remaining !== null
+        ? [observedAtMs ?? nowMs, observedPrimary.remaining, observedPrimary.resetAtMs]
+        : null,
   };
 }
 
@@ -223,73 +280,51 @@ export function sortCredentials(
   return sorted.sort((a, b) => key(a) - key(b) || compareRoutingOrder(a, b));
 }
 
-const summarize = (
-  id: string,
-  credentials: readonly OverviewCredential[],
-  pick: (credential: OverviewCredential) => OverviewWindow | null,
-  nowMs: number
-): OverviewSummaryLine | null => {
-  let label = '';
-  let remaining = 0;
-  let total = 0;
-  let soonestResetMs: number | null = null;
-  const segments = credentials.map((credential) => {
-    const window = pick(credential);
-    if (!window || window.remaining === null) return null;
-    label ||= window.label;
-    remaining += window.remaining;
-    total += 100;
-    if (window.resetAtMs !== null && window.resetAtMs > nowMs) {
-      soonestResetMs =
-        soonestResetMs === null ? window.resetAtMs : Math.min(soonestResetMs, window.resetAtMs);
-    }
-    return window.remaining;
-  });
-  if (total === 0) return null;
-  return { id, label, remaining, total, segments, soonestResetMs };
-};
-
-/** Provider cards: pooled weekly capacity plus each other weekly limit. */
-export function buildProviderSummaries(
+/**
+ * Per provider, the credentials whose weekly limit is known, with recorded
+ * history attached, ready for the pool chart.
+ */
+export function buildProviderPools(
   credentials: readonly OverviewCredential[],
   providerOrder: readonly QuotaProviderType[],
-  nowMs: number
-): OverviewProviderSummary[] {
+  history: QuotaHistory
+): OverviewProviderPool[] {
   return providerOrder
     .map((provider) => {
-      const own = credentials.filter((credential) => credential.entry.type === provider);
+      const own = credentials
+        .filter((credential) => credential.entry.type === provider)
+        .sort(compareRoutingOrder);
       if (own.length === 0) return null;
-      const ordered = [...own].sort(compareRoutingOrder);
-      const primary = summarize('primary', ordered, (credential) => credential.primary, nowMs);
-      const primaryId = ordered.find((credential) => credential.primary)?.primary?.id;
-      const secondaryIds: string[] = [];
-      ordered.forEach((credential) =>
-        credential.windows.forEach((window) => {
-          if (window.id === primaryId || secondaryIds.includes(window.id)) return;
-          if (window.periodHours !== WEEKLY_HOURS) return;
-          secondaryIds.push(window.id);
-        })
-      );
-      const secondary = secondaryIds
-        .map((id) =>
-          summarize(
-            id,
-            ordered,
-            (credential) => credential.windows.find((window) => window.id === id) ?? null,
-            nowMs
-          )
-        )
-        .filter((line): line is OverviewSummaryLine => line !== null);
-      return {
-        provider,
-        credentialCount: own.length,
-        loadedCount: own.filter((credential) => credential.quota?.status === 'success').length,
-        primary,
-        secondary,
-      };
+      const accounts = own.flatMap((credential): PoolAccount[] => {
+        const primary = credential.primary;
+        if (!primary || primary.remaining === null) return [];
+        const key = historyKey(provider, getQuotaCacheKey(credential.entry.file));
+        return [
+          {
+            key,
+            name: credential.entry.file.name,
+            label: credentialLabel(credential.entry.file),
+            priority: credential.priority,
+            enabled: !credential.entry.file.disabled,
+            remaining: primary.remaining,
+            resetAtMs: primary.resetAtMs,
+            periodMs: primary.periodHours === null ? null : primary.periodHours * HOUR_MS,
+            blockedUntilMs: maxOrNull(credential.backAtMs, credential.cooldownUntilMs),
+            samples: history[key] ?? [],
+          },
+        ];
+      });
+      return { provider, credentialCount: own.length, accounts };
     })
-    .filter((summary): summary is OverviewProviderSummary => summary !== null);
+    .filter((pool): pool is OverviewProviderPool => pool !== null);
 }
+
+/** History series key: one per provider credential identity. */
+export const historyKey = (provider: QuotaProviderType, cacheKey: string) =>
+  `${provider}:${cacheKey}`;
+
+const maxOrNull = (a: number | null, b: number | null) =>
+  a === null ? b : b === null ? a : Math.max(a, b);
 
 const EMAIL_PATTERN = /([A-Za-z0-9._%+-])[A-Za-z0-9._%+-]*@([A-Za-z0-9.-]+\.[A-Za-z]{2,})/g;
 
@@ -335,3 +370,7 @@ export function formatCountdown(targetMs: number, nowMs: number): string {
   if (hours > 0) return `${hours}h ${mins}m`;
   return `${mins}m`;
 }
+
+/** "Nov 8": month and day in the reader's locale. */
+export const formatShortDate = (ms: number, locale?: string): string =>
+  new Date(ms).toLocaleDateString(locale, { month: 'short', day: 'numeric' });

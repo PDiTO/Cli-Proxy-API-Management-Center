@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import {
   backAtMs,
   buildOverviewCredential,
-  buildProviderSummaries,
+  buildProviderPools,
+  historyKey,
   credentialLabel,
   maskEmails,
   resetUrgency,
@@ -52,7 +53,11 @@ const claudeQuota = (weeklyUsed: number, fiveHourUsed: number, weeklyResetMs: nu
     ],
   }) as unknown as QuotaCardState;
 
-const credential = (name: string, quota: QuotaCardState | undefined, file: Partial<AuthFileItem> = {}) =>
+const credential = (
+  name: string,
+  quota: QuotaCardState | undefined,
+  file: Partial<AuthFileItem> = {}
+) =>
   buildOverviewCredential({ type: 'claude', file: { name, type: 'claude', ...file } }, quota, NOW);
 
 const window = (patch: Partial<OverviewWindow>): OverviewWindow => ({
@@ -130,20 +135,22 @@ describe('quota overview model', () => {
     expect([...firstInLine(list)]).toEqual(['d.json']);
   });
 
-  test('provider summary pools remaining capacity and lists other weekly limits', () => {
+  test('provider pools keep loaded credentials in routing order with their history', () => {
     const list = [
-      credential('a.json', claudeQuota(40, 0, NOW + 48 * HOUR)),
       credential('b.json', claudeQuota(10, 0, NOW + 24 * HOUR)),
+      credential('a.json', claudeQuota(40, 0, NOW + 48 * HOUR), { disabled: true }),
       credential('c.json', undefined),
     ];
-    const [summary] = buildProviderSummaries(list, ['claude', 'codex'], NOW);
-    expect(summary.credentialCount).toBe(3);
-    expect(summary.loadedCount).toBe(2);
-    expect(summary.primary?.remaining).toBe(150);
-    expect(summary.primary?.total).toBe(200);
-    expect(summary.primary?.segments).toEqual([60, 90, null]);
-    expect(summary.primary?.soonestResetMs).toBe(NOW + 24 * HOUR);
-    expect(summary.secondary.map((line) => line.id)).toEqual(['seven-day-fable']);
+    const history = { [historyKey('claude', 'a.json')]: [[NOW - HOUR, 70, null]] } as const;
+    const [pool] = buildProviderPools(list, ['claude', 'codex'], history as never);
+    expect(pool.credentialCount).toBe(3);
+    expect(pool.accounts.map((account) => [account.name, account.remaining])).toEqual([
+      ['a.json', 60],
+      ['b.json', 90],
+    ]);
+    expect(pool.accounts[0].enabled).toBe(false);
+    expect(pool.accounts[0].samples).toHaveLength(1);
+    expect(pool.accounts[1].periodMs).toBe(168 * HOUR);
   });
 
   test('formats compact countdowns', () => {
@@ -157,7 +164,9 @@ describe('quota overview model', () => {
     // Hyphens are valid in local parts, so a file-name prefix is hidden with the address.
     expect(maskEmails('claude-114cec5c-pdavis@example.com.json')).toBe('c•••@example.com.json');
     expect(maskEmails('no email here')).toBe('no email here');
-    expect(credentialLabel({ name: 'a.json', email: 'x@y.com', note: ' Work Max ' })).toBe('Work Max');
+    expect(credentialLabel({ name: 'a.json', email: 'x@y.com', note: ' Work Max ' })).toBe(
+      'Work Max'
+    );
     expect(credentialLabel({ name: 'a.json', email: 'x@y.com' })).toBe('x@y.com');
   });
 

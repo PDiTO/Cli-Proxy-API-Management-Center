@@ -1,0 +1,203 @@
+/* Pool chart (fork-only). --pool-color is the provider's line color, set inline. */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  padding: 18px 20px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: var(--bg-primary);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.name {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.muted {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px 32px;
+}
+
+.hero {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.heroValue {
+  font-size: 44px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.statList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 36px;
+  margin: 0;
+
+  dt {
+    font-size: 12.5px;
+    color: var(--text-secondary);
+  }
+
+  dd {
+    margin: 3px 0 0;
+    font-size: 14px;
+    font-weight: 550;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.plot {
+  position: relative;
+  min-width: 0;
+  border-radius: 8px;
+  outline: none;
+
+  &:focus-visible {
+    box-shadow: 0 0 0 2px var(--primary-color);
+  }
+}
+
+.svg {
+  display: block;
+  overflow: visible;
+  touch-action: pan-y;
+}
+
+.grid {
+  stroke: var(--border-color);
+  stroke-width: 1;
+  opacity: 0.6;
+}
+
+.axis {
+  stroke: var(--border-hover, var(--border-color));
+  stroke-width: 1;
+}
+
+.tick {
+  fill: var(--text-tertiary, var(--text-secondary));
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.line {
+  fill: none;
+  stroke: var(--pool-color);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.dashed {
+  stroke-dasharray: 6 5;
+}
+
+.jump {
+  fill: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+  // Keeps labels legible where they cross the line or the fill.
+  paint-order: stroke;
+  stroke: var(--bg-primary);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.nowLine {
+  stroke: var(--text-tertiary, var(--text-secondary));
+  stroke-width: 1;
+  opacity: 0.7;
+}
+
+.hoverLine {
+  stroke: var(--pool-color);
+  stroke-width: 1;
+  opacity: 0.8;
+}
+
+.dot {
+  fill: var(--pool-color);
+  stroke: var(--bg-primary);
+  stroke-width: 2;
+}
+
+.tooltip {
+  position: absolute;
+  top: 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 320px;
+  padding: 7px 11px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--floating-surface, var(--bg-secondary));
+  box-shadow: var(--floating-shadow, var(--shadow));
+  color: var(--text-primary);
+  font-size: 13px;
+  white-space: nowrap;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 18px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.legendTitle {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.legendLine {
+  width: 18px;
+  height: 0;
+  border-top: 2px solid var(--pool-color);
+}
+
+.legendDashed {
+  border-top-style: dashed;
+}
+
+.legendNote {
+  margin-left: auto;
+  color: var(--text-tertiary, var(--text-secondary));
+}

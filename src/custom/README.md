@@ -22,11 +22,23 @@ behavior, so upstream changes merge in cleanly.
 
 ## Pages
 
-- **Quota Overview** (`#/quota-overview`): pooled weekly capacity per provider, a ledger of
+- **Quota Overview** (`#/quota-overview`): a pool chart per provider (weekly capacity
+  recorded and projected, with burn rate, first and pool empty, and next reset), a ledger of
   credentials in `fill-first` routing order with the first available credential marked, and
   upstream's cards and quota-window timeline. It shares the quota cache with the official
   Quota Management page, loads unloaded credentials on open and refreshes every 15 minutes
   while visible.
+  - Between those refreshes it uses what CLIProxy already knows. CLIProxy reads the
+    rate-limit headers of every response it proxies (it never polls usage itself) and returns
+    the latest set per credential from `GET /auth-files` (`quota.signals`);
+    `quotaOverview/passiveQuota.ts` parses those. The page re-reads `/auth-files`, which
+    CLIProxy answers locally, every two minutes while visible. The newer of a live and a
+    proxy reading wins.
+  - CLIProxy keeps only the latest reading, so `quotaOverview/history.ts` saves each new one
+    in `localStorage` (per backend address, three weeks) while the page is open. The
+    recorded line has gaps wherever no browser had the page open.
+  - The projection drains the pool at the chosen burn rate the way CPA routes: highest
+    priority tier first, one credential at a time under `fill-first`, spread evenly otherwise.
 
 ## Sync and release
 

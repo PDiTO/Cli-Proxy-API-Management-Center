@@ -1,32 +1,18 @@
 /**
- * Quota Overview building blocks: provider summary cards and ledger rows.
+ * Quota Overview building blocks: ledger rows.
  */
 
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import {
-  IconCheck,
-  IconChevronDown,
-  IconPencil,
-  IconRefreshCw,
-  IconX,
-  type IconProps,
-} from '@/components/ui/icons';
+import { IconCheck, IconPencil, IconRefreshCw, IconX, type IconProps } from '@/components/ui/icons';
 import type { ResolvedTheme } from '@/types';
 import { formatInstantShort, formatRelativeInstant } from '@/utils/quota';
-import {
-  getAuthFileIcon,
-  getThemeSurfaceIconBackground,
-  getTypeLabel,
-  isThemeSurfaceIconProvider,
-} from '@/features/authFiles/constants';
 import {
   QUOTA_PROGRESS_HIGH_THRESHOLD,
   QUOTA_PROGRESS_MEDIUM_THRESHOLD,
 } from '@/features/quota/components/QuotaMeter';
 import { QUOTA_ADAPTERS } from '@/features/quota/providers';
 import { useClaudeResetGrants } from '@/features/quota/providers/claude/ClaudeResetGrants';
-import type { QuotaProviderType } from '@/features/quota/providers/types';
 import {
   containsEmail,
   credentialLabel,
@@ -36,9 +22,8 @@ import {
   resetUrgency,
   type ResetUrgency,
   type OverviewCredential,
-  type OverviewProviderSummary,
-  type OverviewSummaryLine,
 } from './model';
+import { ProviderIcon } from './ProviderIcon';
 import styles from './QuotaOverviewPage.module.scss';
 
 const levelClass = (percent: number | null) =>
@@ -84,21 +69,6 @@ function IconTicket({ size = 20, ...props }: IconProps) {
   );
 }
 
-function ProviderIcon({
-  provider,
-  resolvedTheme,
-}: {
-  provider: string;
-  resolvedTheme: ResolvedTheme;
-}) {
-  const icon = getAuthFileIcon(provider, resolvedTheme);
-  if (!icon) return <span className={styles.iconFallback} aria-hidden="true" />;
-  const surface = isThemeSurfaceIconProvider(provider)
-    ? { background: getThemeSurfaceIconBackground(resolvedTheme) }
-    : undefined;
-  return <img className={styles.icon} src={icon} alt="" style={surface} aria-hidden="true" />;
-}
-
 function ResetWhen({ atMs, nowMs }: { atMs: number | null; nowMs: number }) {
   const { t, i18n } = useTranslation();
   if (atMs === null || atMs <= nowMs) {
@@ -112,110 +82,6 @@ function ResetWhen({ atMs, nowMs }: { atMs: number | null; nowMs: number }) {
       {' · '}
       {formatInstantShort(atMs)}
     </span>
-  );
-}
-
-function SummaryLine({
-  line,
-  nowMs,
-  hideLabel = false,
-}: {
-  line: OverviewSummaryLine;
-  nowMs: number;
-  hideLabel?: boolean;
-}) {
-  const { t } = useTranslation();
-  return (
-    <div className={styles.summaryLine}>
-      {!hideLabel && <div className={styles.summaryLabel}>{line.label}</div>}
-      <div className={styles.summaryValue}>
-        <span className={styles.summaryBig}>{Math.round(line.remaining)}%</span>
-        <span className={styles.muted}>{t('pd_overview.of_total', { total: line.total })}</span>
-      </div>
-      <div className={styles.segments}>
-        {line.segments.map((segment, index) => (
-          <Bar key={index} percent={segment} />
-        ))}
-      </div>
-      <ResetWhen atMs={line.soonestResetMs} nowMs={nowMs} />
-    </div>
-  );
-}
-
-export function ProviderSummaryCard({
-  summary,
-  resolvedTheme,
-  nowMs,
-  active,
-  onSelect,
-}: {
-  summary: OverviewProviderSummary;
-  resolvedTheme: ResolvedTheme;
-  nowMs: number;
-  active: boolean;
-  onSelect: (provider: QuotaProviderType) => void;
-}) {
-  const { t } = useTranslation();
-  const [expanded, setExpanded] = useState(false);
-  const notLoaded = summary.credentialCount - summary.loadedCount;
-  // A single other limit keeps its label in the toggle; several keep theirs on each line.
-  const singleSecondary = summary.secondary.length === 1;
-  return (
-    <section className={`${styles.summaryCard} ${active ? styles.summaryCardActive : ''}`}>
-      <button
-        type="button"
-        className={styles.summaryHead}
-        onClick={() => onSelect(summary.provider)}
-        aria-pressed={active}
-      >
-        <ProviderIcon provider={summary.provider} resolvedTheme={resolvedTheme} />
-        <span className={styles.summaryName}>{getTypeLabel(t, summary.provider)}</span>
-        <span className={styles.muted}>
-          {t('pd_overview.credential_count', { count: summary.credentialCount })}
-        </span>
-      </button>
-      {summary.primary ? (
-        <SummaryLine line={summary.primary} nowMs={nowMs} />
-      ) : (
-        <div className={styles.muted}>{t('pd_overview.not_loaded_row')}</div>
-      )}
-      {notLoaded > 0 && summary.primary && (
-        <div className={styles.muted}>{t('pd_overview.not_loaded', { count: notLoaded })}</div>
-      )}
-      {summary.secondary.length > 0 && (
-        <div className={styles.secondary}>
-          <button
-            type="button"
-            className={styles.disclosure}
-            onClick={() => setExpanded((value) => !value)}
-            aria-expanded={expanded}
-          >
-            <span className={styles.disclosureItems}>
-              {expanded && !singleSecondary ? (
-                <span>{t('pd_overview.other_limits')}</span>
-              ) : (
-                summary.secondary.map((line) => (
-                  <span key={line.id} className={styles.disclosureItem}>
-                    <span>{line.label}</span>
-                    {!expanded && (
-                      <span>
-                        <strong>{Math.round(line.remaining)}%</strong>{' '}
-                        {t('pd_overview.of_total', { total: line.total })}
-                      </span>
-                    )}
-                  </span>
-                ))
-              )}
-            </span>
-            <IconChevronDown size={16} aria-hidden="true" className={styles.chevron} />
-          </button>
-          {expanded &&
-            summary.secondary.map((line) => (
-              <SummaryLine key={line.id} line={line} nowMs={nowMs} hideLabel={singleSecondary} />
-            ))}
-        </div>
-      )}
-    </section>
   );
 }
 
@@ -527,6 +393,11 @@ export function LedgerRow({
               {t('pd_overview.first_in_line')}
             </span>
           )}
+          {credential.source === 'proxy' && credential.observedAtMs !== null && (
+            <span title={t('pd_overview.seen_hint')}>
+              {t('pd_overview.seen', { time: formatCountdown(nowMs, credential.observedAtMs) })}
+            </span>
+          )}
           {file.disabled && <span className={styles.danger}>{t('pd_overview.disabled')}</span>}
           {credential.backAtMs !== null && (
             <span className={styles.danger}>
@@ -547,7 +418,7 @@ export function LedgerRow({
       </div>
 
       <div className={styles.rowWindows}>
-        {status === 'success' && credential.windows.length > 0 ? (
+        {credential.windows.length > 0 ? (
           credential.windows.map((window) => (
             <div key={window.id} className={styles.window}>
               <div className={styles.windowHead}>

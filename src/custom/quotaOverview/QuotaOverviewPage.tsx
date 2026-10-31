@@ -1,23 +1,37 @@
 /**
- * Quota Overview: pooled provider capacity, a compact ledger in routing order,
- * and upstream's cards and timeline as alternatives.
+ * Quota Overview: pooled provider capacity over time (recorded and projected),
+ * a compact ledger in routing order, and upstream's cards and timeline.
  *
  * Fork-only page (see src/custom/README.md). Data loading reuses the upstream
  * quota store, loader and actions, so both quota pages share one cache.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { authFilesApi } from '@/services/api';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { IconEye, IconEyeOff, IconRefreshCw, IconSearch, IconX } from '@/components/ui/icons';
+import {
+  IconChevronLeft,
+  IconEye,
+  IconEyeOff,
+  IconRefreshCw,
+  IconSearch,
+  IconX,
+} from '@/components/ui/icons';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { useNow } from '@/hooks/useNow';
-import { useAuthStore, useNotificationStore, useQuotaStore, useThemeStore } from '@/stores';
+import { normalizeRoutingStrategy } from '@/services/api/routing';
+import {
+  useAuthStore,
+  useConfigStore,
+  useNotificationStore,
+  useQuotaStore,
+  useThemeStore,
+} from '@/stores';
 import type { AuthFileItem, ResolvedTheme } from '@/types';
 import { getQuotaCacheKey } from '@/utils/quota/identity';
 import { ProviderTabs } from '@/features/authFiles/components/ProviderTabs';
@@ -34,17 +48,29 @@ import { QUOTA_ADAPTERS, type QuotaCardState } from '@/features/quota/providers'
 import type { QuotaProviderType } from '@/features/quota/providers/types';
 import { useQuotaActions } from '@/features/quota/hooks/useQuotaActions';
 import { useQuotaBatchLoader } from '@/features/quota/hooks/useQuotaBatchLoader';
-import { LedgerHeader, LedgerRow, ProviderSummaryCard } from './components';
+import { LedgerHeader, LedgerRow } from './components';
+import { recordSample, useQuotaHistory } from './history';
 import {
   OVERVIEW_SORT_MODES,
   buildOverviewCredential,
-  buildProviderSummaries,
+  buildProviderPools,
   credentialLabel,
   maskEmails,
   firstInLine,
+  formatShortDate,
+  historyKey,
   sortCredentials,
   type OverviewSortMode,
 } from './model';
+import {
+  BURN_WINDOWS,
+  CHART_MODES,
+  FUTURE_USAGE,
+  PoolChart,
+  type BurnWindow,
+  type ChartMode,
+  type FutureUsage,
+} from './PoolChart';
 import { useClaudeTiers } from './useClaudeTiers';
 import styles from './QuotaOverviewPage.module.scss';
 
@@ -52,18 +78,41 @@ const TAB_IDS: string[] = ['all', ...QUOTA_TAB_ORDER];
 const VIEW_MODES = ['ledger', 'cards'] as const;
 type ViewMode = (typeof VIEW_MODES)[number];
 const UI_STATE_KEY = 'pd-quota-overview';
+/**
+ * Re-read the credential list while the page is visible. It's answered by CLIProxy alone and
+ * carries the quota it observed on proxied traffic, so this never calls Anthropic or OpenAI.
+ */
+const PROXY_POLL_MS = 2 * 60 * 1000;
 /** Background refresh while the page is visible; quota endpoints are rate-limited upstream. */
 const AUTO_REFRESH_MS = 15 * 60 * 1000;
+/** The chart shows two weeks, starting three days back; the arrows step a week. */
+const RANGE_DAYS = 14;
+const RANGE_PAST_DAYS = 3;
+const RANGE_STEP_DAYS = 7;
 
 interface UiState {
   tab: QuotaTabId;
   sort: OverviewSortMode;
   view: ViewMode;
   hideEmails: boolean;
+  chartMode: ChartMode;
+  burnHours: BurnWindow;
+  futureUsage: FutureUsage;
 }
 
+const oneOf = <T,>(values: readonly T[], value: unknown, fallback: T): T =>
+  values.includes(value as T) ? (value as T) : fallback;
+
 const readUiState = (): UiState => {
-  const fallback: UiState = { tab: 'all', sort: 'routing', view: 'ledger', hideEmails: true };
+  const fallback: UiState = {
+    tab: 'all',
+    sort: 'routing',
+    view: 'ledger',
+    hideEmails: true,
+    chartMode: 'remaining',
+    burnHours: 3,
+    futureUsage: 'current',
+  };
   try {
     const parsed = JSON.parse(localStorage.getItem(UI_STATE_KEY) ?? '{}') as Partial<UiState>;
     return {
@@ -71,12 +120,27 @@ const readUiState = (): UiState => {
       sort: OVERVIEW_SORT_MODES.includes(parsed.sort as OverviewSortMode)
         ? (parsed.sort as OverviewSortMode)
         : fallback.sort,
-      view: VIEW_MODES.includes(parsed.view as ViewMode) ? (parsed.view as ViewMode) : fallback.view,
+      view: VIEW_MODES.includes(parsed.view as ViewMode)
+        ? (parsed.view as ViewMode)
+        : fallback.view,
       hideEmails: typeof parsed.hideEmails === 'boolean' ? parsed.hideEmails : fallback.hideEmails,
+      chartMode: oneOf(CHART_MODES, parsed.chartMode, fallback.chartMode),
+      burnHours: oneOf(BURN_WINDOWS, parsed.burnHours, fallback.burnHours),
+      futureUsage: oneOf(FUTURE_USAGE, parsed.futureUsage, fallback.futureUsage),
     };
   } catch {
     return fallback;
   }
+};
+
+const firstSeen = new WeakMap<object, number>();
+/** A stable timestamp for a reading object: when this page first saw it. */
+const firstSeenMs = (reading: object): number => {
+  const seen = firstSeen.get(reading);
+  if (seen !== undefined) return seen;
+  const now = Date.now();
+  firstSeen.set(reading, now);
+  return now;
 };
 
 const matchesSearch = (file: AuthFileItem, query: string) => {
@@ -86,7 +150,7 @@ const matchesSearch = (file: AuthFileItem, query: string) => {
 };
 
 export function QuotaOverviewPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const resolvedTheme: ResolvedTheme = useThemeStore((state) => state.resolvedTheme);
   const disableControls = connectionStatus !== 'connected';
@@ -115,35 +179,46 @@ export function QuotaOverviewPage() {
   const sessionGeneration = useQuotaStore((state) => state.cacheGeneration);
   const listRequestRef = useRef(0);
 
-  const loadFiles = useCallback(async () => {
-    const requestId = ++listRequestRef.current;
-    if (connectionStatus !== 'connected') {
-      setFiles([]);
-      setLoading(false);
-      return;
-    }
-    const isCurrent = () =>
-      requestId === listRequestRef.current &&
-      sessionGeneration === useQuotaStore.getState().cacheGeneration;
-    setLoading(true);
-    setError('');
-    try {
-      const data = await authFilesApi.list();
-      if (isCurrent()) setFiles(data?.files || []);
-    } catch (err: unknown) {
-      if (isCurrent()) {
-        setError(err instanceof Error ? err.message : t('notification.refresh_failed'));
+  /** `quiet` re-reads in the background without the loading state or clearing errors. */
+  const loadFiles = useCallback(
+    async (quiet = false) => {
+      const requestId = ++listRequestRef.current;
+      if (connectionStatus !== 'connected') {
+        setFiles([]);
+        setLoading(false);
+        return;
       }
-    } finally {
-      if (isCurrent()) setLoading(false);
-    }
-  }, [connectionStatus, sessionGeneration, t]);
+      const isCurrent = () =>
+        requestId === listRequestRef.current &&
+        sessionGeneration === useQuotaStore.getState().cacheGeneration;
+      if (!quiet) {
+        setLoading(true);
+        setError('');
+      }
+      try {
+        const data = await authFilesApi.list();
+        if (isCurrent()) setFiles(data?.files || []);
+      } catch (err: unknown) {
+        if (isCurrent() && !quiet) {
+          setError(err instanceof Error ? err.message : t('notification.refresh_failed'));
+        }
+      } finally {
+        if (isCurrent() && !quiet) setLoading(false);
+      }
+    },
+    [connectionStatus, sessionGeneration, t]
+  );
 
-  useHeaderRefresh(loadFiles);
+  const refreshFiles = useCallback(() => loadFiles(), [loadFiles]);
+  useHeaderRefresh(refreshFiles);
 
   useEffect(() => {
     void loadFiles();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void loadFiles(true);
+    }, PROXY_POLL_MS);
     return () => {
+      window.clearInterval(timer);
       listRequestRef.current += 1;
     };
   }, [loadFiles]);
@@ -194,10 +269,50 @@ export function QuotaOverviewPage() {
     () => entries.map((entry) => buildOverviewCredential(entry, getQuota(entry), nowMs)),
     [entries, getQuota, nowMs]
   );
-  const summaries = useMemo(
-    () => buildProviderSummaries(credentials, QUOTA_TAB_ORDER, nowMs),
-    [credentials, nowMs]
+  // Save each new weekly reading. Readings without an observation time (live
+  // quota from providers that don't report one) are stamped when first seen.
+  const apiBase = useAuthStore((state) => state.apiBase);
+  useEffect(() => {
+    if (!apiBase) return;
+    credentials.forEach((credential) => {
+      if (!credential.sample) return;
+      const [, remaining, resetAtMs] = credential.sample;
+      const at = credential.observedAtMs ?? firstSeenMs(credential.quota ?? credential);
+      recordSample(
+        apiBase,
+        historyKey(credential.entry.type, getQuotaCacheKey(credential.entry.file)),
+        [at, remaining, resetAtMs]
+      );
+    });
+  }, [apiBase, credentials]);
+  const history = useQuotaHistory();
+  const pools = useMemo(
+    () => buildProviderPools(credentials, QUOTA_TAB_ORDER, history),
+    [credentials, history]
   );
+  const visiblePools = pools.filter((pool) => ui.tab === 'all' || ui.tab === pool.provider);
+
+  // Projection follows CPA's routing strategy; anything but fill-first spreads load.
+  const routingStrategy = useConfigStore((state) => state.config?.routingStrategy);
+  const fetchConfig = useConfigStore((state) => state.fetchConfig);
+  useEffect(() => {
+    if (connectionStatus === 'connected') fetchConfig().catch(() => {});
+  }, [connectionStatus, fetchConfig]);
+  const routingMode =
+    normalizeRoutingStrategy(routingStrategy) === 'fill-first' ? 'fill-first' : 'spread';
+
+  const [rangeOffset, setRangeOffset] = useState(0);
+  const rangeStartMs = useMemo(() => {
+    const start = new Date(nowMs);
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - RANGE_PAST_DAYS + rangeOffset * RANGE_STEP_DAYS);
+    return start.getTime();
+  }, [nowMs, rangeOffset]);
+  const rangeEndMs = useMemo(() => {
+    const end = new Date(rangeStartMs);
+    end.setDate(end.getDate() + RANGE_DAYS);
+    return end.getTime();
+  }, [rangeStartMs]);
   const firstNames = useMemo(() => firstInLine(credentials), [credentials]);
   const tabCounts = useMemo(() => buildTabCounts(entries), [entries]);
   // Timeline lanes are labelled by file name; show the account's Note, masking emails.
@@ -226,8 +341,8 @@ export function QuotaOverviewPage() {
     let loaded = 0;
     let attention = 0;
     credentials.forEach((credential) => {
-      if (credential.quota?.status === 'success') loaded += 1;
-      else if (credential.quota?.status === 'error') attention += 1;
+      if (credential.windows.length > 0) loaded += 1;
+      if (credential.quota?.status === 'error') attention += 1;
     });
     return { loadedCount: loaded, attentionCount: attention };
   }, [credentials]);
@@ -261,10 +376,7 @@ export function QuotaOverviewPage() {
 
   // This page is meant to stay open: load credentials that have never been
   // fetched, and refresh everything on an interval while the tab is visible.
-  const loadableEntries = useMemo(
-    () => entries.filter((entry) => !entry.file.disabled),
-    [entries]
-  );
+  const loadableEntries = useMemo(() => entries.filter((entry) => !entry.file.disabled), [entries]);
   useEffect(() => {
     if (!canUseActions || batchLoading) return;
     const idle = loadableEntries.filter((entry) => !getQuota(entry));
@@ -285,11 +397,16 @@ export function QuotaOverviewPage() {
   }, [canUseActions, loadQuota, loadableEntries]);
 
   const sortOptions = useMemo(
-    () => OVERVIEW_SORT_MODES.map((mode) => ({ value: mode, label: t(`pd_overview.sort_${mode}`) })),
+    () =>
+      OVERVIEW_SORT_MODES.map((mode) => ({ value: mode, label: t(`pd_overview.sort_${mode}`) })),
     [t]
   );
   const viewOptions = useMemo(
     () => VIEW_MODES.map((mode) => ({ value: mode, label: t(`pd_overview.view_${mode}`) })),
+    [t]
+  );
+  const futureOptions = useMemo(
+    () => FUTURE_USAGE.map((mode) => ({ value: mode, label: t(`pd_overview.future_${mode}`) })),
     [t]
   );
 
@@ -330,31 +447,18 @@ export function QuotaOverviewPage() {
       )}
 
       {loading && entries.length === 0 ? (
-        <div className={styles.summaryGrid} aria-hidden="true">
-          {Array.from({ length: 3 }, (_, index) => (
-            <Skeleton key={index} height={170} rounded={14} />
+        <div className={styles.poolList} aria-hidden="true">
+          {Array.from({ length: 2 }, (_, index) => (
+            <Skeleton key={index} height={420} rounded={14} />
           ))}
         </div>
       ) : entries.length === 0 ? (
-        <EmptyState title={t('pd_overview.empty_title')} description={t('pd_overview.empty_desc')} />
+        <EmptyState
+          title={t('pd_overview.empty_title')}
+          description={t('pd_overview.empty_desc')}
+        />
       ) : (
         <>
-          <div
-            className={styles.summaryGrid}
-            style={{ '--summary-columns': Math.min(summaries.length, 4) } as CSSProperties}
-          >
-            {summaries.map((summary) => (
-              <ProviderSummaryCard
-                key={summary.provider}
-                summary={summary}
-                resolvedTheme={resolvedTheme}
-                nowMs={nowMs}
-                active={ui.tab === summary.provider}
-                onSelect={(provider) => updateUi({ tab: ui.tab === provider ? 'all' : provider })}
-              />
-            ))}
-          </div>
-
           <ProviderTabs
             types={TAB_IDS}
             counts={tabCounts}
@@ -362,6 +466,103 @@ export function QuotaOverviewPage() {
             resolvedTheme={resolvedTheme}
             onChange={(tab) => updateUi({ tab: tab as QuotaTabId })}
           />
+
+          <div className={styles.chartControls}>
+            <div className={styles.segmented} role="group" aria-label={t('pd_overview.chart_mode')}>
+              {CHART_MODES.map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-pressed={ui.chartMode === mode}
+                  onClick={() => updateUi({ chartMode: mode })}
+                >
+                  {t(`pd_overview.mode_${mode}`)}
+                </button>
+              ))}
+            </div>
+            <div className={styles.controlGroup}>
+              <span id="pd-burn-window" className={styles.controlLabel}>
+                {t('pd_overview.burn_rate')}
+              </span>
+              <div className={styles.segmented} role="group" aria-labelledby="pd-burn-window">
+                {BURN_WINDOWS.map((hours) => (
+                  <button
+                    key={hours}
+                    type="button"
+                    aria-pressed={ui.burnHours === hours}
+                    onClick={() => updateUi({ burnHours: hours })}
+                  >
+                    {t('pd_overview.hours_short', { count: hours })}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className={styles.controlGroup}>
+              <span id="pd-future-usage" className={styles.controlLabel}>
+                {t('pd_overview.future_usage')}
+              </span>
+              <Select
+                value={ui.futureUsage}
+                options={futureOptions}
+                onChange={(value) => updateUi({ futureUsage: value as FutureUsage })}
+                ariaLabelledBy="pd-future-usage"
+                size="sm"
+              />
+            </div>
+            <div className={styles.rangeNav}>
+              <span className={styles.rangeLabel}>
+                {t('pd_overview.range', {
+                  from: formatShortDate(rangeStartMs, i18n.language),
+                  to: formatShortDate(rangeEndMs - 1, i18n.language),
+                })}
+              </span>
+              <div className={styles.segmented}>
+                <button
+                  type="button"
+                  onClick={() => setRangeOffset((value) => value - 1)}
+                  aria-label={t('pd_overview.range_prev')}
+                  title={t('pd_overview.range_prev')}
+                >
+                  <IconChevronLeft size={14} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRangeOffset(0)}
+                  disabled={rangeOffset === 0}
+                >
+                  {t('pd_overview.today')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRangeOffset((value) => value + 1)}
+                  aria-label={t('pd_overview.range_next')}
+                  title={t('pd_overview.range_next')}
+                >
+                  <IconChevronLeft size={14} aria-hidden="true" className={styles.flip} />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className={styles.poolList}>
+            {visiblePools.map((pool) => (
+              <PoolChart
+                key={pool.provider}
+                provider={pool.provider}
+                accounts={pool.accounts}
+                credentialCount={pool.credentialCount}
+                nowMs={nowMs}
+                rangeStartMs={rangeStartMs}
+                rangeEndMs={rangeEndMs}
+                mode={ui.chartMode}
+                burnHours={ui.burnHours}
+                futureUsage={ui.futureUsage}
+                routing={routingMode}
+                hideEmails={ui.hideEmails}
+                resolvedTheme={resolvedTheme}
+              />
+            ))}
+          </div>
 
           <div className={styles.toolbar}>
             <div className={styles.search}>
@@ -395,7 +596,9 @@ export function QuotaOverviewPage() {
                 className={styles.iconButton}
                 onClick={() => updateUi({ hideEmails: !ui.hideEmails })}
                 aria-pressed={ui.hideEmails}
-                aria-label={ui.hideEmails ? t('pd_overview.show_emails') : t('pd_overview.hide_emails')}
+                aria-label={
+                  ui.hideEmails ? t('pd_overview.show_emails') : t('pd_overview.hide_emails')
+                }
                 title={`${ui.hideEmails ? t('pd_overview.show_emails') : t('pd_overview.hide_emails')}. ${t('pd_overview.name_hint')}`}
               >
                 {ui.hideEmails ? (
@@ -434,7 +637,11 @@ export function QuotaOverviewPage() {
                   nowMs={nowMs}
                   firstInLine={firstNames.has(credential.entry.file.name)}
                   hideEmails={ui.hideEmails}
-                  tier={credential.entry.type === 'claude' ? claudeTiers[credential.entry.file.name] : null}
+                  tier={
+                    credential.entry.type === 'claude'
+                      ? claudeTiers[credential.entry.file.name]
+                      : null
+                  }
                   onRename={(note) => renameCredential(credential.entry.file, note)}
                   canRefresh={canUseActions && !credential.entry.file.disabled}
                   resetting={resettingQuotaName === getQuotaCacheKey(credential.entry.file)}

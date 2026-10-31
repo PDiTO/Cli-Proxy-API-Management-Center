@@ -44,166 +44,98 @@
   font-size: 13px;
 }
 
-/* ---------- provider summary ---------- */
+/* ---------- pool charts ---------- */
 
-.summaryGrid {
-  display: grid;
-  // --summary-columns is the provider count (max 4), set inline by the page.
-  grid-template-columns: repeat(var(--summary-columns, 1), minmax(0, 360px));
-  width: fit-content;
-  max-width: 100%;
-  overflow: hidden;
-  border: 1px solid var(--border-color);
-  border-radius: 14px;
-  background: var(--bg-primary);
-
-  @media (max-width: 900px) {
-    grid-template-columns: minmax(0, 1fr);
-    width: 100%;
-  }
-}
-
-.summaryCard {
+.chartControls {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
-  padding: 16px 18px;
-  background: var(--bg-primary);
-  // Hairline separators that also work when cards wrap onto a second row.
-  box-shadow:
-    -1px 0 0 var(--border-color),
-    0 -1px 0 var(--border-color);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
 }
 
-.summaryCardActive {
-  background: var(--bg-secondary);
-  box-shadow: inset 0 2px 0 var(--primary-color);
-}
-
-.summaryHead {
-  display: flex;
+.controlGroup {
+  display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-
-  > :last-child {
-    margin-left: auto;
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--primary-color);
-    outline-offset: 3px;
-    border-radius: 4px;
-  }
 }
 
-.summaryName {
-  font-weight: 650;
-  color: var(--text-primary);
-}
-
-.summaryLine {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.summaryLabel {
+.controlLabel {
   font-size: 12.5px;
   color: var(--text-secondary);
 }
 
-.summaryValue {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
+// Same shape as the upstream quota timeline's mode and range toggles.
+.segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+
+  button {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 12px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 12.5px;
+    cursor: pointer;
+    transition:
+      color var(--dur-hover, 150ms) var(--ease-out-strong, ease-out),
+      background-color var(--dur-hover, 150ms) var(--ease-out-strong, ease-out);
+
+    &:hover:not(:disabled) {
+      color: var(--text-primary);
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--primary-color);
+      outline-offset: 1px;
+    }
+
+    &[aria-pressed='true'] {
+      border-color: var(--border-hover);
+      background: var(--floating-surface, var(--bg-primary));
+      color: var(--text-primary);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      transition: none;
+    }
+  }
 }
 
-.summaryBig {
-  font-size: 26px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  color: var(--text-primary);
+.rangeNav {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.rangeLabel {
+  font-size: 12.5px;
+  color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
-.segments {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 1fr;
-  gap: 4px;
+.flip {
+  transform: scaleX(-1);
 }
 
-.secondary {
+.poolList {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border-color);
-}
-
-.disclosure {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 12.5px;
-  text-align: left;
-  cursor: pointer;
-
-  &:hover {
-    color: var(--text-primary);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--primary-color);
-    outline-offset: 3px;
-    border-radius: 4px;
-  }
-
-  strong {
-    color: var(--text-primary);
-    font-variant-numeric: tabular-nums;
-  }
-}
-
-.disclosureItems {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.disclosureItem {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.chevron {
-  flex: none;
-  transition: transform var(--dur-hover, 150ms) var(--ease-out-strong, ease-out);
-
-  [aria-expanded='true'] > & {
-    transform: rotate(180deg);
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    transition: none;
-  }
+  gap: 14px;
 }
 
 /* ---------- bars ---------- */
